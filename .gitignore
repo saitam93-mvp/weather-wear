@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# Variables de entorno (¡MUY IMPORTANTE!)
+.env
+
+# Streamlit
+.streamlit/
+
+# Datos locales (Opcional: Si quieres que el modelo suba pre-entrenado, quita 'models/')
+# Por ahora dejaremos que suba el modelo inicial, pero no la data temporal
+.DS_Store
