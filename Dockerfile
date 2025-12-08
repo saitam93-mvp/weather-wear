@@ -8,11 +8,11 @@ ENV PYTHONUNBUFFERED=1
 # 3. Directorio de trabajo en el contenedor
 WORKDIR /app
 
-# 4. Instalar dependencias del sistema necesarias para compilar algunas libs de Python
+# 4. Instalar dependencias del sistema MÍNIMAS
+# Quitamos 'software-properties-common' que estaba fallando
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
-    software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
 # 5. Copiar requirements e instalar dependencias de Python
@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 6. Copiar el resto del código
 COPY . .
 
-# 7. Exponer el puerto de Streamlit (default 8501)
+# 7. Exponer el puerto de Streamlit
 EXPOSE 8501
 
 # 8. Verificación de salud (Healthcheck)
