@@ -10,15 +10,20 @@ cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
 retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
 openmeteo = openmeteo_requests.Client(session=retry_session)
 
-def get_weather_forecast():
+def get_weather_forecast(lat=None, lon=None):
     """
-    Obtiene el clima, ESTANDARIZA nombres de columnas y sanea tipos de datos.
+    Obtiene el clima. Si recibe lat/lon, usa esos.
+    Si no, usa los valores por defecto de settings (Santiago).
     """
+    
+    # Lógica de fallback: Si no me dan coordenadas, uso las del config
+    latitude = lat if lat is not None else settings.LATITUDE
+    longitude = lon if lon is not None else settings.LONGITUDE
     
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": settings.LATITUDE,
-        "longitude": settings.LONGITUDE,
+        "latitude": latitude,
+        "longitude": longitude,
         "daily": [
             "temperature_2m_max", 
             "temperature_2m_min",
