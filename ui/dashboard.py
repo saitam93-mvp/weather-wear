@@ -1,103 +1,55 @@
 import streamlit as st
-import datetime
-from streamlit_js_eval import get_geolocation # <--- IMPORTANTE
 from services.weather_api import get_weather_forecast
-from logic.inference import get_clothing_recommendation
+from logic.inference import get_recommendation
 from ui.feedback import render_feedback_section
 
 def render_dashboard():
-    st.title("IsiWear 🧣")
+    st.title("isiWear 🧣")
     
-    # --- 1. GEOLOCALIZACIÓN ---
-    # Por defecto usaremos None (lo que forzará el default del config)
-    user_lat = None
-    user_lon = None
-    
-    col_geo, col_info = st.columns([1, 3])
-    
-    with col_geo:
-        # Botón para pedir ubicación
-        if st.checkbox("📍 Usar mi ubicación"):
-            loc = get_geolocation()
-            if loc:
-                user_lat = loc['coords']['latitude']
-                user_lon = loc['coords']['longitude']
-                st.success(f"Ubicación detectada.")
-            else:
-                st.warning("Esperando permiso del navegador...")
-
-    # --- 2. OBTENER DATOS ---
-    # Pasamos las coordenadas dinámicas (si existen) a la API
+    # 1. Obtener Datos (Services)
     with st.spinner("Consultando satélites..."):
-        # Si user_lat es None, la función usará el default de settings
-        df_forecast = get_weather_forecast(lat=user_lat, lon=user_lon)
+        weather_df = get_weather_forecast()
     
-    if df_forecast.empty:
-        st.error("No se pudo conectar con el servicio meteorológico.")
+    if weather_df.empty:
+        st.error("No pudimos conectar con el servicio de clima. Revisa tu conexión.")
         return
 
-    # --- 3. LÓGICA DE NEGOCIO (Igual que antes) ---
-    now = datetime.datetime.now()
-    current_hour = now.hour
-    today = now.date()
+    # 2. Obtener Recomendación (Logic)
+    rec = get_recommendation(weather_df)
     
-    df_forecast['date_only'] = df_forecast['date'].dt.date
-    
-    # Filtros de seguridad por si las fechas no coinciden exacto por timezone
-    try:
-        row_today = df_forecast[df_forecast['date_only'] == today].iloc[0]
-        tomorrow = today + datetime.timedelta(days=1)
-        row_tomorrow = df_forecast[df_forecast['date_only'] == tomorrow].iloc[0]
-    except IndexError:
-        st.warning("Los datos del clima no están sincronizados con tu fecha local.")
+    if not rec:
+        st.error("Error calculando la recomendación.")
         return
 
-    # CASO A vs CASO B
-    if current_hour < 14:
-        mode_label = "🌞 MODO MAÑANA (Outfit de Hoy)"
-        target_row = row_today
-        yesterday = today - datetime.timedelta(days=1)
-        row_compare = df_forecast[df_forecast['date_only'] == yesterday]
-        
-        comparison_text = ""
-        if not row_compare.empty:
-            diff = row_today['temp_max'] - row_compare.iloc[0]['temp_max']
-            comparison_text = f"({abs(diff):.1f}°C {'más calor' if diff > 0 else 'más frío'} que ayer)"
-    else:
-        mode_label = "🌙 MODO TARDE (Prepárate para Mañana)"
-        target_row = row_tomorrow
-        diff = row_tomorrow['temp_max'] - row_today['temp_max']
-        comparison_text = f"({abs(diff):.1f}°C {'más calor' if diff > 0 else 'más frío'} que hoy)"
-
-    # Inferencia
-    recommendation = get_clothing_recommendation(target_row)
+    # 3. UI: Header con Contexto Temporal
+    # Usamos colores semánticos: Mañana (Azul/Día) vs Tarde (Naranja/Atardecer)
+    mode_color = "blue" if rec['mode'] == "Mañana" else "orange"
+    st.markdown(f":{mode_color}[**MODO {rec['mode'].upper()}**]")
     
-    st.caption(mode_label)
+    # 4. UI: La Recomendación Principal (Big Number)
+    col1, col2 = st.columns([2, 1])
     
-    # KPIs Visuales
-    col_main, col_data = st.columns([2, 1])
-    
-    with col_main:
+    with col1:
         st.metric(
-            label="Nivel Recomendado", 
-            value=f"Nivel {recommendation['level']}",
-            delta=comparison_text,
-            delta_color="off"
+            label="Nivel Recomendado",
+            value=f"Nivel {rec['level']}",
+            delta=rec['context'], # Ej: "3°C más frío que ayer"
+            delta_color="off"     # Gris neutro, ya que es informativo
         )
-        st.info(f"💡 **Tip:** {recommendation['description']}")
-    
-    with col_data:
-        st.markdown("### Pronóstico")
-        st.write(f"🌡️ **Max:** {target_row['temp_max']}°C")
-        st.write(f"❄️ **Min:** {target_row['temp_min']}°C")
-        
-        if target_row['precipitation_sum'] > 0.1:
-            st.write(f"🌧️ **Lluvia:** {target_row['precipitation_sum']} mm")
-            st.warning("¡Lleva paraguas!")
+        st.info(f"**{rec['level_text']}**")
 
-    # Feedback Section
-    yesterday_date = today - datetime.timedelta(days=1)
-    row_yesterday = df_forecast[df_forecast['date_only'] == yesterday_date]
-    
-    if not row_yesterday.empty:
-        render_feedback_section(row_yesterday.iloc[0])
+    with col2:
+        st.write("Pronóstico:")
+        st.write(f"🌡️ Max: {rec['temp_max']}°C")
+        st.write(f"❄️ Min: {rec['temp_min']}°C")
+
+    # 5. UI: Razón de la decisión
+    if "Alerta" in rec['reasoning']:
+        st.warning(rec['reasoning']) # Amarillo si es por lluvia
+    else:
+        st.caption(f"💡 Razón: {rec['reasoning']}")
+
+    # 6. UI: Sección de Feedback (Pasamos los datos de AYER - fila 0)
+    # Solo mostramos feedback si estamos en modo mañana o si el usuario quiere
+    yesterday_row = weather_df.iloc[0]
+    render_feedback_section(yesterday_row)
