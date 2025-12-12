@@ -4,7 +4,7 @@ from logic.inference import get_recommendation
 from ui.feedback import render_feedback_section
 
 def render_dashboard():
-    st.title("WeatherWear 🧣")
+    st.title("IsiWear 🧣")
     
     # 1. Obtener Datos (Services)
     with st.spinner("Consultando satélites..."):
