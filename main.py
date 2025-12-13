@@ -1,20 +1,25 @@
-# main.py
 import streamlit as st
-# ... imports ...
-from services.location import initialize_user_location
 
 # --- 1. CONFIGURACIÓN PRIMERO (CRÍTICO: Debe ser la primera instrucción Streamlit) ---
 st.set_page_config(
     page_title="IsiWear",
     page_icon="🧣",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
+    # Ocultamos el menú de hamburguesa estándar para que parezca más App
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
 )
 
 # --- 2. IMPORTACIONES DEL NEGOCIO ---
 # Importamos después de la config para evitar conflictos de inicialización
 from logic.training import sync_model_with_db
 from ui.dashboard import render_dashboard
+from services.location import initialize_user_location
+from ui.pwa import inject_pwa_metadata # <--- NUEVO: Módulo PWA
 
 def run_startup_sync():
     """
@@ -25,7 +30,7 @@ def run_startup_sync():
         # Mostramos un spinner visual mientras descarga los datos
         with st.spinner("🧠 Sincronizando memoria con la nube..."):
             try:
-                # Llamamos a la lógica que creamos anteriormente
+                # Llamamos a la lógica de entrenamiento/descarga
                 success = sync_model_with_db()
                 
                 if success:
@@ -42,13 +47,17 @@ def run_startup_sync():
         st.session_state["data_synced"] = True
 
 def main():
-    # 1. Intentar obtener ubicación (Bloqueante la primera vez)
+    # 1. Inyectar Metaetiquetas PWA
+    # Esto debe ir antes de cualquier elemento visual grande para configurar el navegador
+    inject_pwa_metadata()
+
+    # 2. Intentar obtener ubicación (No bloqueante, escucha activa)
     initialize_user_location()
 
-    # 2. Sincronizar memoria
+    # 3. Sincronizar memoria (Solo la primera vez)
     run_startup_sync()
 
-    # 3. Renderizar Dashboard
+    # 4. Renderizar Dashboard Principal
     render_dashboard()
 
 if __name__ == "__main__":
