@@ -1,8 +1,11 @@
+# main.py
 import streamlit as st
+# ... imports ...
+from services.location import initialize_user_location
 
 # --- 1. CONFIGURACIÓN PRIMERO (CRÍTICO: Debe ser la primera instrucción Streamlit) ---
 st.set_page_config(
-    page_title="WeatherWear",
+    page_title="IsiWear",
     page_icon="🧣",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -39,10 +42,13 @@ def run_startup_sync():
         st.session_state["data_synced"] = True
 
 def main():
-    # 1. Intentar recuperar la memoria (Cold Start)
+    # 1. Intentar obtener ubicación (Bloqueante la primera vez)
+    initialize_user_location()
+
+    # 2. Sincronizar memoria
     run_startup_sync()
 
-    # 2. Renderizar la interfaz principal (Dashboard)
+    # 3. Renderizar Dashboard
     render_dashboard()
 
 if __name__ == "__main__":

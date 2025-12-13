@@ -1,0 +1,703 @@
+# CONTEXTO DEL PROYECTO WEATHERWEAR
+# Generado automáticamente
+
+
+==================================================
+FILE: .\Dockerfile
+==================================================
+# 1. Imagen base: Python 3.10 ligero
+FROM python:3.10-slim
+
+# 2. Evitar archivos .pyc y buffer en logs
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# 3. Directorio de trabajo en el contenedor
+WORKDIR /app
+
+# 4. Instalar dependencias del sistema MÍNIMAS
+# Quitamos 'software-properties-common' que estaba fallando
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 5. Copiar requirements e instalar dependencias de Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 6. Copiar el resto del código
+COPY . .
+
+# 7. Exponer el puerto de Streamlit
+EXPOSE 8501
+
+# 8. Verificación de salud (Healthcheck)
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+
+# 9. Comando de inicio
+ENTRYPOINT ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+==================================================
+FILE: .\main.py
+==================================================
+import streamlit as st
+
+# --- 1. CONFIGURACIÓN PRIMERO (CRÍTICO: Debe ser la primera instrucción Streamlit) ---
+st.set_page_config(
+    page_title="WeatherWear",
+    page_icon="🧣",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# --- 2. IMPORTACIONES DEL NEGOCIO ---
+# Importamos después de la config para evitar conflictos de inicialización
+from logic.training import sync_model_with_db
+from ui.dashboard import render_dashboard
+
+def run_startup_sync():
+    """
+    Ejecuta la sincronización con Supabase SOLO una vez por sesión.
+    Esto recupera la 'memoria' del asistente si la app se reinició en el servidor.
+    """
+    if "data_synced" not in st.session_state:
+        # Mostramos un spinner visual mientras descarga los datos
+        with st.spinner("🧠 Sincronizando memoria con la nube..."):
+            try:
+                # Llamamos a la lógica que creamos anteriormente
+                success = sync_model_with_db()
+                
+                if success:
+                    st.toast("Modelo actualizado con tu historial.", icon="✅")
+                else:
+                    # Conectó bien, pero no había datos previos (usuario nuevo)
+                    st.toast("Conectado a la nube (Historial vacío).", icon="☁️")
+                    
+            except Exception as e:
+                # Si falla la red, no rompemos la app, solo avisamos
+                st.error(f"⚠️ Advertencia: No se pudo sincronizar el historial. ({e})")
+        
+        # Marcamos la flag en sesión para no volver a ejecutar esto en cada click
+        st.session_state["data_synced"] = True
+
+def main():
+    # 1. Intentar recuperar la memoria (Cold Start)
+    run_startup_sync()
+
+    # 2. Renderizar la interfaz principal (Dashboard)
+    render_dashboard()
+
+if __name__ == "__main__":
+    main()
+==================================================
+FILE: .\requirements.txt
+==================================================
+streamlit>=1.30.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+supabase>=2.3.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+watchdog>=3.0.0
+# --- NUEVAS DEPENDENCIAS (API Clima) ---
+openmeteo-requests
+requests-cache
+retry-requests
+# --- NUEVA DEPENDENCIA (Geolocalización UI) ---
+streamlit-js-eval
+==================================================
+FILE: .\config\settings.py
+==================================================
+import os
+from dotenv import load_dotenv
+
+# Cargar variables del archivo .env
+load_dotenv()
+
+# --- SUPABASE CONFIG ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# --- LOCATION CONFIG ---
+# Default: Santiago de Chile
+LATITUDE = float(os.getenv("LATITUDE", "-33.426334"))
+LONGITUDE = float(os.getenv("LONGITUDE", "-70.589805"))
+TIMEZONE = os.getenv("TIMEZONE", "auto")
+
+# --- APP CONSTANTS ---
+# Definición de Niveles de Ropa (0 a 4)
+CLOTHING_LEVELS = {
+    0: "Nivel 0: Muy Ligero (Shorts/Polera)",
+    1: "Nivel 1: Ligero (Pantalón/Manga larga fina)",
+    2: "Nivel 2: Intermedio (Polerón/Chaqueta ligera)",
+    3: "Nivel 3: Abrigo (Chaqueta gruesa/Impermeable)",
+    4: "Nivel 4: Extremo (Parka térmica/Bufanda/Guantes)"
+}
+
+# Reglas de Negocio (Hard Rules)
+RAIN_PROB_THRESHOLD = 40.0  # % probabilidad
+RAIN_AMOUNT_THRESHOLD = 1.0 # mm lluvia
+==================================================
+FILE: .\logic\inference.py
+==================================================
+import pandas as pd
+from datetime import datetime
+from config import settings
+from logic.preprocessing import prepare_features
+from logic.training import load_model
+
+def get_recommendation(weather_df):
+    """
+    Toma el DataFrame del clima (Ayer, Hoy, Mañana) y decide qué recomendar
+    basado en la hora actual y reglas de negocio.
+    """
+    if weather_df.empty:
+        return None
+
+    # 1. Determinar el Modo Temporal (Mañana vs Tarde/Noche)
+    current_hour = datetime.now().hour
+    is_morning_mode = current_hour < 14  # Hasta las 13:59 es modo "Hoy"
+    
+    # Índices del DataFrame (0: Ayer, 1: Hoy, 2: Mañana)
+    if is_morning_mode:
+        # Modo Mañana: ¿Qué me pongo HOY? (Comparado con AYER)
+        target_row = weather_df.iloc[1] # Hoy
+        ref_row = weather_df.iloc[0]    # Ayer
+        time_label = "hoy"
+        ref_label = "ayer"
+    else:
+        # Modo Tarde: ¿Qué preparo para MAÑANA? (Comparado con HOY)
+        target_row = weather_df.iloc[2] # Mañana
+        ref_row = weather_df.iloc[1]    # Hoy
+        time_label = "mañana"
+        ref_label = "hoy"
+
+    # 2. Verificar Regla de Lluvia (Hard Rule)
+    # Si la probabilidad es alta O la cantidad es significativa, ignoramos el modelo KNN
+    rain_prob = target_row.get('rain_prob', 0)
+    rain_mm = target_row.get('rain_mm', 0)
+    
+    is_raining = (rain_prob >= settings.RAIN_PROB_THRESHOLD) or \
+                 (rain_mm >= settings.RAIN_AMOUNT_THRESHOLD)
+
+    if is_raining:
+        # Lluvia fuerza nivel 3 (Abrigo/Impermeable) como mínimo
+        suggested_level = 3
+        reasoning = f"⚠️ Alerta de lluvia ({rain_prob}% / {rain_mm}mm). Mejor prevenir."
+    else:
+        # 3. Inferencia con Modelo KNN (Preferencia Personal)
+        knn = load_model()
+        if knn:
+            # Preparamos los datos de una sola fila para predicción
+            X_in = prepare_features(target_row.to_frame().T, is_training=False)
+            suggested_level = int(knn.predict(X_in)[0])
+            reasoning = "Según tu historial de preferencias."
+        else:
+            # Fallback por si borraron el modelo
+            suggested_level = 2 
+            reasoning = "Modelo no encontrado. Usando default."
+
+    # 4. Contexto Relativo (El "Delta")
+    # Calculamos cuánto cambia la temperatura máxima respecto a la referencia
+    temp_diff = target_row['temp_max'] - ref_row['temp_max']
+    
+    if abs(temp_diff) < 2:
+        context_text = f"Similar a {ref_label}"
+    elif temp_diff > 0:
+        context_text = f"{abs(round(temp_diff, 1))}°C más calor que {ref_label}"
+    else:
+        context_text = f"{abs(round(temp_diff, 1))}°C más frío que {ref_label}"
+
+    # Retornamos un diccionario rico en información para la UI
+    return {
+        "level": suggested_level,
+        "level_text": settings.CLOTHING_LEVELS.get(suggested_level, "Desconocido"),
+        "temp_max": target_row['temp_max'],
+        "temp_min": target_row['temp_min'],
+        "context": context_text,
+        "reasoning": reasoning,
+        "target_date": target_row['date'],
+        "mode": "Mañana" if is_morning_mode else "Tarde"
+    }
+==================================================
+FILE: .\logic\preprocessing.py
+==================================================
+import pandas as pd
+import joblib
+import os
+from sklearn.preprocessing import MinMaxScaler
+
+# Rutas de persistencia
+MODEL_DIR = "models"
+SCALER_PATH = os.path.join(MODEL_DIR, "scaler.pkl")
+
+def get_scaler():
+    """Carga el scaler existente o retorna None si no existe."""
+    if os.path.exists(SCALER_PATH):
+        return joblib.load(SCALER_PATH)
+    return None
+
+def save_scaler(scaler):
+    """Guarda el scaler entrenado."""
+    if not os.path.exists(MODEL_DIR):
+        os.makedirs(MODEL_DIR)
+    joblib.dump(scaler, SCALER_PATH)
+
+def prepare_features(df_or_dict, is_training=False):
+    """
+    Convierte datos crudos (temp_max, temp_min) en vector normalizado para el modelo.
+    
+    Args:
+        df_or_dict: DataFrame o Diccionario con 'temp_max', 'temp_min'.
+        is_training: Si es True, entrena (fit) el scaler. Si es False, solo transforma.
+    
+    Returns:
+        X_scaled: Datos listos para el KNN.
+    """
+    # Asegurar formato DataFrame
+    if isinstance(df_or_dict, dict):
+        df = pd.DataFrame([df_or_dict])
+    else:
+        df = df_or_dict.copy()
+
+    # Seleccionar features relevantes para sensación térmica
+    features = df[['temp_max', 'temp_min']]
+
+    if is_training:
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(features)
+        save_scaler(scaler)
+    else:
+        scaler = get_scaler()
+        if not scaler:
+            raise FileNotFoundError("Scaler no encontrado. Entrena el modelo primero.")
+        X_scaled = scaler.transform(features)
+        
+    return X_scaled
+==================================================
+FILE: .\logic\training.py
+==================================================
+import pandas as pd
+from sklearn.neighbors import KNeighborsClassifier
+import joblib
+import os
+from logic.preprocessing import prepare_features
+from services.db import get_training_history
+
+MODEL_PATH = os.path.join("models", "knn_model.pkl")
+
+def train_model(data):
+    """
+    Entrena el modelo KNN con nuevos datos y lo guarda en disco.
+    
+    Args:
+        data: DataFrame con columnas ['temp_max', 'temp_min', 'clothing_level']
+    """
+    # 1. Preprocesar Features (Scaling)
+    # Importante: Al entrenar, regeneramos el scaler con los nuevos rangos de datos
+    X = prepare_features(data, is_training=True)
+    y = data['clothing_level']
+
+    # 2. Configurar KNN
+    # n_neighbors=3 es un buen balance para empezar con pocos datos
+    n_neighbors = min(3, len(data)) 
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors)
+    
+    # 3. Entrenar
+    knn.fit(X, y)
+
+    # 4. Guardar
+    joblib.dump(knn, MODEL_PATH)
+    print(f"Modelo re-entrenado y guardado en {MODEL_PATH} con {len(data)} muestras.")
+
+def load_model():
+    """Carga el modelo desde disco."""
+    if os.path.exists(MODEL_PATH):
+        return joblib.load(MODEL_PATH)
+    return None
+
+def sync_model_with_db():
+    """
+    1. Descarga datos de Supabase.
+    2. Si hay datos, re-entrena el modelo local (.pkl).
+    3. Retorna True si hubo re-entrenamiento, False si la DB estaba vacía.
+    """
+    history_data = get_training_history()
+    
+    if not history_data:
+        return False
+        
+    # Convertir la lista de dicts de Supabase a DataFrame de Pandas
+    df = pd.DataFrame(history_data)
+    
+    # Asegurarnos de tener solo las columnas que el modelo necesita
+    # (Supabase devuelve también 'id', 'created_at', etc.)
+    df_clean = df[['temp_max', 'temp_min', 'clothing_level']]
+    
+    # Llamamos a tu función existente que ya sabe cómo entrenar y guardar pkl
+    train_model(df_clean)
+    
+    return True
+==================================================
+FILE: .\services\db.py
+==================================================
+import streamlit as st
+from supabase import create_client, Client
+from config import settings
+import datetime
+
+# Singleton de conexión
+@st.cache_resource
+def get_db_client() -> Client:
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+
+def get_training_history():
+    """
+    Descarga TODO el historial de entrenamiento desde Supabase.
+    """
+    supabase = get_db_client()
+    try:
+        response = supabase.table("training_history").select("*").execute()
+        return response.data
+    except Exception as e:
+        print(f"Error descargando historial: {e}")
+        return []
+
+def save_feedback_history(
+    date_ref, t_max, t_min, level, 
+    precip=0.0, wind_max=0.0, w_code=0, 
+    t_mean=0.0, hum_mean=0.0, wind_mean=0.0, clouds=0.0, rad=0.0, precip_prob=0.0
+):
+    """
+    Guarda el registro extendido en Supabase.
+    INCLUYE: Sanitización de tipos (NumPy float32 -> Python float)
+    """
+    supabase = get_db_client()
+    
+    # --- SANITIZACIÓN DE DATOS ---
+    # Convertimos explícitamente a tipos nativos de Python para evitar error JSON
+    try:
+        data = {
+            "date": str(date_ref),
+            "clothing_level": int(level),
+            
+            # Variables Térmicas (Convertimos a float estándar)
+            "temp_max": float(t_max),
+            "temp_min": float(t_min),
+            "temp_mean": float(t_mean),
+            
+            # Variables Atmosféricas
+            "precipitation_sum": float(precip),
+            "precip_prob_max": float(precip_prob),
+            "humidity_mean": float(hum_mean),
+            "cloud_cover_mean": float(clouds),
+            
+            # Variables Físicas
+            "windspeed_max": float(wind_max),
+            "windspeed_mean": float(wind_mean),
+            "solar_rad_sum": float(rad),
+            "weathercode": int(w_code) # Este debe ser entero
+        }
+
+        # Usamos upsert
+        response = supabase.table("training_history").upsert(data).execute()
+        return True
+        
+    except Exception as e:
+        print(f"Error guardando extended history: {e}")
+        return False
+==================================================
+FILE: .\services\supabase_client.py
+==================================================
+def save_daily_feedback(date_str, temp_max, temp_min, real_level):
+    """Guarda el feedback del usuario (La verdad absoluta)."""
+    # 1. Debug: Imprimir en la consola de la terminal
+    print(f"--> INTENTANDO GUARDAR: {date_str}, Nivel: {real_level}")
+    
+    supabase = init_supabase()
+    if not supabase: 
+        print("--> ERROR: No hay conexión a Supabase")
+        return False
+
+    data = {
+        "date": str(date_str),
+        "temp_max": float(temp_max),
+        "temp_min": float(temp_min),
+        "clothing_level": int(real_level),
+        # "created_at": "now()"  <-- COMENTA ESTO. Deja que Supabase ponga la fecha por defecto.
+    }
+
+    try:
+        # 2. Ejecutar y capturar respuesta
+        response = supabase.table("user_feedback").insert(data).execute()
+        
+        # 3. Debug: Ver qué respondió Supabase
+        print(f"--> RESPUESTA SUPABASE: {response}")
+        
+        return True
+    except Exception as e:
+        # 4. Debug: Imprimir el error real
+        print(f"--> EXCEPCIÓN AL GUARDAR: {e}")
+        st.error(f"Error técnico: {e}")
+        return False
+==================================================
+FILE: .\services\weather_api.py
+==================================================
+import openmeteo_requests
+import requests_cache
+import pandas as pd
+from retry_requests import retry
+from config import settings
+import datetime
+
+# --- CONFIGURACIÓN DE CACHÉ ---
+cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
+retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
+openmeteo = openmeteo_requests.Client(session=retry_session)
+
+def get_weather_forecast():
+    """
+    Obtiene el clima, ESTANDARIZA nombres de columnas y sanea tipos de datos.
+    """
+    
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": settings.LATITUDE,
+        "longitude": settings.LONGITUDE,
+        "daily": [
+            "temperature_2m_max", 
+            "temperature_2m_min",
+            "temperature_2m_mean",
+            "precipitation_sum",
+            "precipitation_probability_max", 
+            "windspeed_10m_max",
+            "windspeed_10m_mean",
+            "shortwave_radiation_sum",
+            "weathercode"
+        ],
+        "hourly": ["relative_humidity_2m", "cloud_cover"],
+        "timezone": "auto"
+    }
+
+    try:
+        responses = openmeteo.weather_api(url, params=params)
+        response = responses[0] 
+
+        # --- PROCESAMIENTO DAILY ---
+        daily = response.Daily()
+        
+        # AQUÍ ESTÁ EL TRUCO: Usamos nombres SIMPLES directamente
+        daily_data = {
+            "date": pd.date_range(
+                start=pd.to_datetime(daily.Time(), unit="s", utc=True),
+                end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
+                freq=pd.Timedelta(seconds=daily.Interval()),
+                inclusive="left"
+            ).normalize()
+        }
+        
+        # Mapeo directo a nombres cortos
+        daily_data["temp_max"] = daily.Variables(0).ValuesAsNumpy()
+        daily_data["temp_min"] = daily.Variables(1).ValuesAsNumpy()
+        daily_data["temp_mean"] = daily.Variables(2).ValuesAsNumpy() # Antes: temperature_2m_mean
+        daily_data["precipitation_sum"] = daily.Variables(3).ValuesAsNumpy()
+        daily_data["precip_prob_max"] = daily.Variables(4).ValuesAsNumpy() # Antes: precipitation_probability_max
+        daily_data["windspeed_max"] = daily.Variables(5).ValuesAsNumpy() # Antes: windspeed_10m_max
+        daily_data["windspeed_mean"] = daily.Variables(6).ValuesAsNumpy() # Antes: windspeed_10m_mean
+        daily_data["solar_rad_sum"] = daily.Variables(7).ValuesAsNumpy() # Antes: shortwave_radiation_sum
+        daily_data["weathercode"] = daily.Variables(8).ValuesAsNumpy()
+
+        df_daily = pd.DataFrame(data=daily_data)
+
+        # --- PROCESAMIENTO HOURLY ---
+        hourly = response.Hourly()
+        hourly_data = {
+            "date": pd.date_range(
+                start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+                end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+                freq=pd.Timedelta(seconds=hourly.Interval()),
+                inclusive="left"
+            )
+        }
+        
+        hourly_data["relative_humidity_2m"] = hourly.Variables(0).ValuesAsNumpy()
+        hourly_data["cloud_cover"] = hourly.Variables(1).ValuesAsNumpy()
+        
+        df_hourly = pd.DataFrame(data=hourly_data)
+        
+        # Agregación por día
+        df_hourly_mean = df_hourly.set_index('date').resample('D').mean().reset_index()
+        
+        # Nombres simplificados para hourly también
+        df_hourly_mean = df_hourly_mean.rename(columns={
+            "relative_humidity_2m": "humidity_mean", # Antes: relative_humidity_2m_mean
+            "cloud_cover": "cloud_cover_mean"
+        })
+        
+        # Merge Final
+        df_daily['date_match'] = df_daily['date'].dt.date
+        df_hourly_mean['date_match'] = df_hourly_mean['date'].dt.date
+        
+        df_final = pd.merge(
+            df_daily, 
+            df_hourly_mean[['date_match', 'humidity_mean', 'cloud_cover_mean']], 
+            on='date_match', 
+            how='left'
+        )
+        df_final = df_final.drop(columns=['date_match'])
+
+        # --- LIMPIEZA FINAL (Fix Decimales y Tipos) ---
+        
+        # 1. Convertir float32 a float estándar (Python nativo)
+        cols_num = df_final.select_dtypes(include=['number']).columns
+        # Esto asegura que los números sean compatibles con JSON y Supabase
+        df_final[cols_num] = df_final[cols_num].astype(float)
+
+        # 2. Redondear SOLO TEMPERATURAS a 1 decimal
+        temps = ["temp_max", "temp_min", "temp_mean"]
+        for col in temps:
+            if col in df_final.columns:
+                df_final[col] = df_final[col].round(1)
+
+        return df_final
+
+    except Exception as e:
+        print(f"Error API Clima: {e}")
+        return pd.DataFrame()
+==================================================
+FILE: .\ui\dashboard.py
+==================================================
+import streamlit as st
+from services.weather_api import get_weather_forecast
+from logic.inference import get_recommendation
+from ui.feedback import render_feedback_section
+
+def render_dashboard():
+    st.title("isiWear 🧣")
+    
+    # 1. Obtener Datos (Services)
+    with st.spinner("Consultando satélites..."):
+        weather_df = get_weather_forecast()
+    
+    if weather_df.empty:
+        st.error("No pudimos conectar con el servicio de clima. Revisa tu conexión.")
+        return
+
+    # 2. Obtener Recomendación (Logic)
+    rec = get_recommendation(weather_df)
+    
+    if not rec:
+        st.error("Error calculando la recomendación.")
+        return
+
+    # 3. UI: Header con Contexto Temporal
+    # Usamos colores semánticos: Mañana (Azul/Día) vs Tarde (Naranja/Atardecer)
+    mode_color = "blue" if rec['mode'] == "Mañana" else "orange"
+    st.markdown(f":{mode_color}[**MODO {rec['mode'].upper()}**]")
+    
+    # 4. UI: La Recomendación Principal (Big Number)
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.metric(
+            label="Nivel Recomendado",
+            value=f"Nivel {rec['level']}",
+            delta=rec['context'], # Ej: "3°C más frío que ayer"
+            delta_color="off"     # Gris neutro, ya que es informativo
+        )
+        st.info(f"**{rec['level_text']}**")
+
+    with col2:
+        st.write("Pronóstico:")
+        st.write(f"🌡️ Max: {rec['temp_max']}°C")
+        st.write(f"❄️ Min: {rec['temp_min']}°C")
+
+    # 5. UI: Razón de la decisión
+    if "Alerta" in rec['reasoning']:
+        st.warning(rec['reasoning']) # Amarillo si es por lluvia
+    else:
+        st.caption(f"💡 Razón: {rec['reasoning']}")
+
+    # 6. UI: Sección de Feedback (Pasamos los datos de AYER - fila 0)
+    # Solo mostramos feedback si estamos en modo mañana o si el usuario quiere
+    yesterday_row = weather_df.iloc[0]
+    render_feedback_section(yesterday_row)
+==================================================
+FILE: .\ui\feedback.py
+==================================================
+import streamlit as st
+import pandas as pd
+from logic.training import train_model
+from services.db import save_feedback_history
+from config import settings
+import datetime
+
+def render_feedback_section(yesterday_row):
+    """
+    Muestra un formulario para corregir la predicción de AYER.
+    """
+    st.divider()
+    st.subheader("🧠 Entrena a tu Asistente")
+    
+    # Calculamos fecha de ayer por seguridad
+    yesterday_date = datetime.date.today() - datetime.timedelta(days=1)
+    
+    with st.expander("¿Qué debiste usar ayer realmente?", expanded=False):
+        # Mostramos datos redondeados visualmente
+        st.write(
+            f"Datos del {yesterday_date}: "
+            f"Max **{yesterday_row['temp_max']}°C** / "
+            f"Min **{yesterday_row['temp_min']}°C**"
+        )
+        
+        with st.form("feedback_form"):
+            selected_level = st.selectbox(
+                "Selecciona el nivel que fue MÁS adecuado:",
+                options=list(settings.CLOTHING_LEVELS.keys()),
+                format_func=lambda x: settings.CLOTHING_LEVELS[x]
+            )
+            
+            submit_btn = st.form_submit_button("Corregir y Aprender")
+            
+            if submit_btn:
+                # --- EXTRACCIÓN DE DATOS ---
+                # Ahora usamos las claves SIMPLIFICADAS que definimos en weather_api.py
+                
+                saved_cloud = save_feedback_history(
+                    date_ref=yesterday_date,
+                    t_max=yesterday_row['temp_max'],
+                    t_min=yesterday_row['temp_min'],
+                    level=selected_level,
+                    
+                    # Datos existentes
+                    precip=yesterday_row.get('precipitation_sum', 0.0),
+                    w_code=yesterday_row.get('weathercode', 0),
+                    
+                    # Datos Nuevos (Nombres coincidentes con weather_api)
+                    t_mean=yesterday_row.get('temp_mean', 0.0),
+                    hum_mean=yesterday_row.get('humidity_mean', 0.0),
+                    wind_max=yesterday_row.get('windspeed_max', 0.0),
+                    wind_mean=yesterday_row.get('windspeed_mean', 0.0),
+                    clouds=yesterday_row.get('cloud_cover_mean', 0.0),
+                    rad=yesterday_row.get('solar_rad_sum', 0.0),
+                    precip_prob=yesterday_row.get('precip_prob_max', 0.0)
+                )
+
+                if saved_cloud:
+                    st.toast("✅ Datos guardados correctamente en la nube", icon="☁️")
+                else:
+                    st.error("⚠️ Error guardando en Supabase, pero entrenaremos localmente.")
+
+                # Entrenamiento local (Solo usa Temps)
+                training_data = pd.DataFrame([{
+                    "temp_max": yesterday_row['temp_max'],
+                    "temp_min": yesterday_row['temp_min'],
+                    "clothing_level": selected_level
+                }])
+                
+                try:
+                    train_model(training_data)
+                    st.success("Modelo local actualizado.")
+                except Exception as e:
+                    st.error(f"Error entrenamiento local: {e}")

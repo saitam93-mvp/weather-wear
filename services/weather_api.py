@@ -1,9 +1,9 @@
 import openmeteo_requests
 import requests_cache
-import pandas as pd
+import pandas as pd  # <--- ESTA ERA LA LÍNEA QUE FALTABA
 from retry_requests import retry
-from config import settings
-import datetime
+import streamlit as st
+from services.location import get_current_coords 
 
 # --- CONFIGURACIÓN DE CACHÉ ---
 cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
@@ -12,13 +12,24 @@ openmeteo = openmeteo_requests.Client(session=retry_session)
 
 def get_weather_forecast():
     """
-    Obtiene el clima, ESTANDARIZA nombres de columnas y sanea tipos de datos.
+    Obtiene el clima usando coordenadas dinámicas y estandariza los datos.
     """
     
+    # 1. Obtener coordenadas (del usuario o default)
+    loc = get_current_coords()
+    lat = loc['lat']
+    lon = loc['lon']
+    
+    # Debug en consola
+    print(f"📡 API Clima consultando: {lat}, {lon}")
+
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": settings.LATITUDE,
-        "longitude": settings.LONGITUDE,
+        "latitude": lat,
+        "longitude": lon,
+        "past_days": 1,     # CRÍTICO para tener datos de "Ayer"
+        "forecast_days": 3, 
+        "timezone": "auto", # CRÍTICO para calcular hora local correctamente
         "daily": [
             "temperature_2m_max", 
             "temperature_2m_min",
@@ -31,17 +42,21 @@ def get_weather_forecast():
             "weathercode"
         ],
         "hourly": ["relative_humidity_2m", "cloud_cover"],
-        "timezone": "auto"
     }
 
     try:
         responses = openmeteo.weather_api(url, params=params)
-        response = responses[0] 
+        response = responses[0]
 
+        # --- CAPTURA DE ZONA HORARIA ---
+        # Guardamos la diferencia horaria (segundos) que nos dice la API
+        # Esto es vital para que logic/inference.py sepa qué hora es realmente ahí
+        utc_offset = response.UtcOffsetSeconds()
+        st.session_state["current_utc_offset"] = utc_offset
+        
         # --- PROCESAMIENTO DAILY ---
         daily = response.Daily()
         
-        # AQUÍ ESTÁ EL TRUCO: Usamos nombres SIMPLES directamente
         daily_data = {
             "date": pd.date_range(
                 start=pd.to_datetime(daily.Time(), unit="s", utc=True),
@@ -54,12 +69,12 @@ def get_weather_forecast():
         # Mapeo directo a nombres cortos
         daily_data["temp_max"] = daily.Variables(0).ValuesAsNumpy()
         daily_data["temp_min"] = daily.Variables(1).ValuesAsNumpy()
-        daily_data["temp_mean"] = daily.Variables(2).ValuesAsNumpy() # Antes: temperature_2m_mean
+        daily_data["temp_mean"] = daily.Variables(2).ValuesAsNumpy()
         daily_data["precipitation_sum"] = daily.Variables(3).ValuesAsNumpy()
-        daily_data["precip_prob_max"] = daily.Variables(4).ValuesAsNumpy() # Antes: precipitation_probability_max
-        daily_data["windspeed_max"] = daily.Variables(5).ValuesAsNumpy() # Antes: windspeed_10m_max
-        daily_data["windspeed_mean"] = daily.Variables(6).ValuesAsNumpy() # Antes: windspeed_10m_mean
-        daily_data["solar_rad_sum"] = daily.Variables(7).ValuesAsNumpy() # Antes: shortwave_radiation_sum
+        daily_data["precip_prob_max"] = daily.Variables(4).ValuesAsNumpy()
+        daily_data["windspeed_max"] = daily.Variables(5).ValuesAsNumpy()
+        daily_data["windspeed_mean"] = daily.Variables(6).ValuesAsNumpy()
+        daily_data["solar_rad_sum"] = daily.Variables(7).ValuesAsNumpy()
         daily_data["weathercode"] = daily.Variables(8).ValuesAsNumpy()
 
         df_daily = pd.DataFrame(data=daily_data)
@@ -83,9 +98,9 @@ def get_weather_forecast():
         # Agregación por día
         df_hourly_mean = df_hourly.set_index('date').resample('D').mean().reset_index()
         
-        # Nombres simplificados para hourly también
+        # Nombres simplificados
         df_hourly_mean = df_hourly_mean.rename(columns={
-            "relative_humidity_2m": "humidity_mean", # Antes: relative_humidity_2m_mean
+            "relative_humidity_2m": "humidity_mean",
             "cloud_cover": "cloud_cover_mean"
         })
         
@@ -99,13 +114,13 @@ def get_weather_forecast():
             on='date_match', 
             how='left'
         )
+        
         df_final = df_final.drop(columns=['date_match'])
 
         # --- LIMPIEZA FINAL (Fix Decimales y Tipos) ---
         
         # 1. Convertir float32 a float estándar (Python nativo)
         cols_num = df_final.select_dtypes(include=['number']).columns
-        # Esto asegura que los números sean compatibles con JSON y Supabase
         df_final[cols_num] = df_final[cols_num].astype(float)
 
         # 2. Redondear SOLO TEMPERATURAS a 1 decimal
@@ -118,4 +133,5 @@ def get_weather_forecast():
 
     except Exception as e:
         print(f"Error API Clima: {e}")
+        # Aquí fallaba antes porque 'pd' no existía
         return pd.DataFrame()
