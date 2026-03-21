@@ -44,16 +44,24 @@ import streamlit as st
 
 # --- 1. CONFIGURACIÓN PRIMERO (CRÍTICO: Debe ser la primera instrucción Streamlit) ---
 st.set_page_config(
-    page_title="WeatherWear",
+    page_title="IsiWear",
     page_icon="🧣",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
+    # Ocultamos el menú de hamburguesa estándar para que parezca más App
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
 )
 
 # --- 2. IMPORTACIONES DEL NEGOCIO ---
 # Importamos después de la config para evitar conflictos de inicialización
 from logic.training import sync_model_with_db
 from ui.dashboard import render_dashboard
+from services.location import initialize_user_location
+from ui.pwa import inject_pwa_metadata # <--- NUEVO: Módulo PWA
 
 def run_startup_sync():
     """
@@ -64,7 +72,7 @@ def run_startup_sync():
         # Mostramos un spinner visual mientras descarga los datos
         with st.spinner("🧠 Sincronizando memoria con la nube..."):
             try:
-                # Llamamos a la lógica que creamos anteriormente
+                # Llamamos a la lógica de entrenamiento/descarga
                 success = sync_model_with_db()
                 
                 if success:
@@ -81,10 +89,17 @@ def run_startup_sync():
         st.session_state["data_synced"] = True
 
 def main():
-    # 1. Intentar recuperar la memoria (Cold Start)
+    # 1. Inyectar Metaetiquetas PWA
+    # Esto debe ir antes de cualquier elemento visual grande para configurar el navegador
+    inject_pwa_metadata()
+
+    # 2. Intentar obtener ubicación (No bloqueante, escucha activa)
+    initialize_user_location()
+
+    # 3. Sincronizar memoria (Solo la primera vez)
     run_startup_sync()
 
-    # 2. Renderizar la interfaz principal (Dashboard)
+    # 4. Renderizar Dashboard Principal
     render_dashboard()
 
 if __name__ == "__main__":
@@ -100,11 +115,9 @@ supabase>=2.3.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 watchdog>=3.0.0
-# --- NUEVAS DEPENDENCIAS (API Clima) ---
 openmeteo-requests
 requests-cache
 retry-requests
-# --- NUEVA DEPENDENCIA (Geolocalización UI) ---
 streamlit-js-eval
 ==================================================
 FILE: .\config\settings.py
@@ -142,7 +155,8 @@ RAIN_AMOUNT_THRESHOLD = 1.0 # mm lluvia
 FILE: .\logic\inference.py
 ==================================================
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+import streamlit as st
 from config import settings
 from logic.preprocessing import prepare_features
 from logic.training import load_model
@@ -150,33 +164,48 @@ from logic.training import load_model
 def get_recommendation(weather_df):
     """
     Toma el DataFrame del clima (Ayer, Hoy, Mañana) y decide qué recomendar
-    basado en la hora actual y reglas de negocio.
+    basado en la hora local real del usuario y reglas de negocio.
     """
     if weather_df.empty:
         return None
 
-    # 1. Determinar el Modo Temporal (Mañana vs Tarde/Noche)
-    current_hour = datetime.now().hour
-    is_morning_mode = current_hour < 14  # Hasta las 13:59 es modo "Hoy"
+    # --- 1. CÁLCULO DE HORA LOCAL REAL (CRÍTICO) ---
+    # Recuperamos el offset que nos dio Open-Meteo al consultar la API.
+    # Si no existe (ej. error API), usamos -14400 segundos (-4 horas, Chile) como fallback seguro.
+    offset_sec = st.session_state.get("current_utc_offset", -14400)
     
-    # Índices del DataFrame (0: Ayer, 1: Hoy, 2: Mañana)
+    # Calculamos la hora en la ubicación del usuario
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc + timedelta(seconds=offset_sec)
+    current_hour = now_local.hour
+    
+    # Debug para consola (para que veas que funciona la hora dinámica)
+    print(f"🕒 Hora local calculada: {now_local.strftime('%H:%M')} (Offset: {offset_sec/3600}h)")
+
+    # --- 2. DETERMINAR MODO TEMPORAL ---
+    # Hasta las 13:59 es modo "Hoy" (Mañana). Desde las 14:00 es modo "Mañana" (Tarde/Noche).
+    is_morning_mode = current_hour < 14 
+    
+    # Índices del DataFrame asumiendo que API trae: [0: Ayer, 1: Hoy, 2: Mañana, ...]
     if is_morning_mode:
         # Modo Mañana: ¿Qué me pongo HOY? (Comparado con AYER)
         target_row = weather_df.iloc[1] # Hoy
         ref_row = weather_df.iloc[0]    # Ayer
         time_label = "hoy"
         ref_label = "ayer"
+        mode_text = "Mañana"
     else:
         # Modo Tarde: ¿Qué preparo para MAÑANA? (Comparado con HOY)
         target_row = weather_df.iloc[2] # Mañana
         ref_row = weather_df.iloc[1]    # Hoy
         time_label = "mañana"
         ref_label = "hoy"
+        mode_text = "Tarde"
 
-    # 2. Verificar Regla de Lluvia (Hard Rule)
+    # --- 3. REGLA DE LLUVIA (VETO DURO) ---
     # Si la probabilidad es alta O la cantidad es significativa, ignoramos el modelo KNN
-    rain_prob = target_row.get('rain_prob', 0)
-    rain_mm = target_row.get('rain_mm', 0)
+    rain_prob = target_row.get('precip_prob_max', 0)
+    rain_mm = target_row.get('precipitation_sum', 0)
     
     is_raining = (rain_prob >= settings.RAIN_PROB_THRESHOLD) or \
                  (rain_mm >= settings.RAIN_AMOUNT_THRESHOLD)
@@ -186,19 +215,20 @@ def get_recommendation(weather_df):
         suggested_level = 3
         reasoning = f"⚠️ Alerta de lluvia ({rain_prob}% / {rain_mm}mm). Mejor prevenir."
     else:
-        # 3. Inferencia con Modelo KNN (Preferencia Personal)
+        # --- 4. INFERENCIA CON MODELO KNN (IA) ---
         knn = load_model()
         if knn:
             # Preparamos los datos de una sola fila para predicción
+            # is_training=False usa el scaler guardado, no crea uno nuevo
             X_in = prepare_features(target_row.to_frame().T, is_training=False)
             suggested_level = int(knn.predict(X_in)[0])
             reasoning = "Según tu historial de preferencias."
         else:
-            # Fallback por si borraron el modelo
+            # Fallback por si borraron el modelo o es usuario nuevo
             suggested_level = 2 
-            reasoning = "Modelo no encontrado. Usando default."
+            reasoning = "Usando configuración estándar (Aún no tengo datos tuyos)."
 
-    # 4. Contexto Relativo (El "Delta")
+    # --- 5. CONTEXTO RELATIVO (EL DELTA) ---
     # Calculamos cuánto cambia la temperatura máxima respecto a la referencia
     temp_diff = target_row['temp_max'] - ref_row['temp_max']
     
@@ -218,7 +248,7 @@ def get_recommendation(weather_df):
         "context": context_text,
         "reasoning": reasoning,
         "target_date": target_row['date'],
-        "mode": "Mañana" if is_morning_mode else "Tarde"
+        "mode": mode_text
     }
 ==================================================
 FILE: .\logic\preprocessing.py
@@ -408,48 +438,66 @@ def save_feedback_history(
         print(f"Error guardando extended history: {e}")
         return False
 ==================================================
-FILE: .\services\supabase_client.py
+FILE: .\services\location.py
 ==================================================
-def save_daily_feedback(date_str, temp_max, temp_min, real_level):
-    """Guarda el feedback del usuario (La verdad absoluta)."""
-    # 1. Debug: Imprimir en la consola de la terminal
-    print(f"--> INTENTANDO GUARDAR: {date_str}, Nivel: {real_level}")
-    
-    supabase = init_supabase()
-    if not supabase: 
-        print("--> ERROR: No hay conexión a Supabase")
-        return False
+import streamlit as st
+from streamlit_js_eval import get_geolocation
 
-    data = {
-        "date": str(date_str),
-        "temp_max": float(temp_max),
-        "temp_min": float(temp_min),
-        "clothing_level": int(real_level),
-        # "created_at": "now()"  <-- COMENTA ESTO. Deja que Supabase ponga la fecha por defecto.
-    }
+# --- CONFIGURACIÓN DEFAULT (Plan B) ---
+DEFAULT_LAT = -33.426334 # Santiago
+DEFAULT_LON = -70.589805
+DEFAULT_TZ = "America/Santiago"
 
-    try:
-        # 2. Ejecutar y capturar respuesta
-        response = supabase.table("user_feedback").insert(data).execute()
+def initialize_user_location():
+    """
+    Gestiona la obtención de coordenadas de forma NO bloqueante.
+    """
+    # 1. Llamamos al componente SIEMPRE (para que escuche cambios o cargas)
+    # key="get_loc" evita que se renderice múltiples veces innecesariamente
+    loc_data = get_geolocation(component_key="get_loc")
+
+    # 2. Lógica de Actualización
+    if loc_data and 'coords' in loc_data:
+        # ¡Llegaron datos reales!
+        coords = loc_data['coords']
         
-        # 3. Debug: Ver qué respondió Supabase
-        print(f"--> RESPUESTA SUPABASE: {response}")
-        
-        return True
-    except Exception as e:
-        # 4. Debug: Imprimir el error real
-        print(f"--> EXCEPCIÓN AL GUARDAR: {e}")
-        st.error(f"Error técnico: {e}")
-        return False
+        # Solo actualizamos si cambiaron para evitar reruns infinitos
+        current = st.session_state.get("user_location", {})
+        if current.get("lat") != coords['latitude']:
+            st.session_state["user_location"] = {
+                "lat": coords['latitude'],
+                "lon": coords['longitude'],
+                "source": "gps" # Marca de agua para saber que es real
+            }
+            st.rerun() # Recargamos para aplicar la nueva ubicación inmediatamente
+
+    # 3. Inicialización por defecto (Si aún no hay nada en memoria)
+    if "user_location" not in st.session_state:
+        st.session_state["user_location"] = {
+            "lat": DEFAULT_LAT,
+            "lon": DEFAULT_LON,
+            "source": "default"
+        }
+
+    return st.session_state["user_location"]
+
+def get_current_coords():
+    """Retorna las coordenadas actuales (sean GPS o Default)"""
+    # Si por alguna razón se llama antes de init, devuelve default
+    return st.session_state.get("user_location", {
+        "lat": DEFAULT_LAT,
+        "lon": DEFAULT_LON,
+        "source": "default"
+    })
 ==================================================
 FILE: .\services\weather_api.py
 ==================================================
 import openmeteo_requests
 import requests_cache
-import pandas as pd
+import pandas as pd  # <--- ESTA ERA LA LÍNEA QUE FALTABA
 from retry_requests import retry
-from config import settings
-import datetime
+import streamlit as st
+from services.location import get_current_coords 
 
 # --- CONFIGURACIÓN DE CACHÉ ---
 cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
@@ -458,13 +506,24 @@ openmeteo = openmeteo_requests.Client(session=retry_session)
 
 def get_weather_forecast():
     """
-    Obtiene el clima, ESTANDARIZA nombres de columnas y sanea tipos de datos.
+    Obtiene el clima usando coordenadas dinámicas y estandariza los datos.
     """
     
+    # 1. Obtener coordenadas (del usuario o default)
+    loc = get_current_coords()
+    lat = loc['lat']
+    lon = loc['lon']
+    
+    # Debug en consola
+    print(f"📡 API Clima consultando: {lat}, {lon}")
+
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": settings.LATITUDE,
-        "longitude": settings.LONGITUDE,
+        "latitude": lat,
+        "longitude": lon,
+        "past_days": 1,     # CRÍTICO para tener datos de "Ayer"
+        "forecast_days": 3, 
+        "timezone": "auto", # CRÍTICO para calcular hora local correctamente
         "daily": [
             "temperature_2m_max", 
             "temperature_2m_min",
@@ -477,17 +536,21 @@ def get_weather_forecast():
             "weathercode"
         ],
         "hourly": ["relative_humidity_2m", "cloud_cover"],
-        "timezone": "auto"
     }
 
     try:
         responses = openmeteo.weather_api(url, params=params)
-        response = responses[0] 
+        response = responses[0]
 
+        # --- CAPTURA DE ZONA HORARIA ---
+        # Guardamos la diferencia horaria (segundos) que nos dice la API
+        # Esto es vital para que logic/inference.py sepa qué hora es realmente ahí
+        utc_offset = response.UtcOffsetSeconds()
+        st.session_state["current_utc_offset"] = utc_offset
+        
         # --- PROCESAMIENTO DAILY ---
         daily = response.Daily()
         
-        # AQUÍ ESTÁ EL TRUCO: Usamos nombres SIMPLES directamente
         daily_data = {
             "date": pd.date_range(
                 start=pd.to_datetime(daily.Time(), unit="s", utc=True),
@@ -500,12 +563,12 @@ def get_weather_forecast():
         # Mapeo directo a nombres cortos
         daily_data["temp_max"] = daily.Variables(0).ValuesAsNumpy()
         daily_data["temp_min"] = daily.Variables(1).ValuesAsNumpy()
-        daily_data["temp_mean"] = daily.Variables(2).ValuesAsNumpy() # Antes: temperature_2m_mean
+        daily_data["temp_mean"] = daily.Variables(2).ValuesAsNumpy()
         daily_data["precipitation_sum"] = daily.Variables(3).ValuesAsNumpy()
-        daily_data["precip_prob_max"] = daily.Variables(4).ValuesAsNumpy() # Antes: precipitation_probability_max
-        daily_data["windspeed_max"] = daily.Variables(5).ValuesAsNumpy() # Antes: windspeed_10m_max
-        daily_data["windspeed_mean"] = daily.Variables(6).ValuesAsNumpy() # Antes: windspeed_10m_mean
-        daily_data["solar_rad_sum"] = daily.Variables(7).ValuesAsNumpy() # Antes: shortwave_radiation_sum
+        daily_data["precip_prob_max"] = daily.Variables(4).ValuesAsNumpy()
+        daily_data["windspeed_max"] = daily.Variables(5).ValuesAsNumpy()
+        daily_data["windspeed_mean"] = daily.Variables(6).ValuesAsNumpy()
+        daily_data["solar_rad_sum"] = daily.Variables(7).ValuesAsNumpy()
         daily_data["weathercode"] = daily.Variables(8).ValuesAsNumpy()
 
         df_daily = pd.DataFrame(data=daily_data)
@@ -529,9 +592,9 @@ def get_weather_forecast():
         # Agregación por día
         df_hourly_mean = df_hourly.set_index('date').resample('D').mean().reset_index()
         
-        # Nombres simplificados para hourly también
+        # Nombres simplificados
         df_hourly_mean = df_hourly_mean.rename(columns={
-            "relative_humidity_2m": "humidity_mean", # Antes: relative_humidity_2m_mean
+            "relative_humidity_2m": "humidity_mean",
             "cloud_cover": "cloud_cover_mean"
         })
         
@@ -545,13 +608,13 @@ def get_weather_forecast():
             on='date_match', 
             how='left'
         )
+        
         df_final = df_final.drop(columns=['date_match'])
 
         # --- LIMPIEZA FINAL (Fix Decimales y Tipos) ---
         
         # 1. Convertir float32 a float estándar (Python nativo)
         cols_num = df_final.select_dtypes(include=['number']).columns
-        # Esto asegura que los números sean compatibles con JSON y Supabase
         df_final[cols_num] = df_final[cols_num].astype(float)
 
         # 2. Redondear SOLO TEMPERATURAS a 1 decimal
@@ -564,6 +627,7 @@ def get_weather_forecast():
 
     except Exception as e:
         print(f"Error API Clima: {e}")
+        # Aquí fallaba antes porque 'pd' no existía
         return pd.DataFrame()
 ==================================================
 FILE: .\ui\dashboard.py
@@ -572,11 +636,28 @@ import streamlit as st
 from services.weather_api import get_weather_forecast
 from logic.inference import get_recommendation
 from ui.feedback import render_feedback_section
+from services.location import get_current_coords # <--- NUEVO IMPORT
 
 def render_dashboard():
-    st.title("isiWear 🧣")
+    st.title("IsiWear 🧣")
     
-    # 1. Obtener Datos (Services)
+    # --- 1. INDICADOR DE UBICACIÓN (NUEVO) ---
+    # Recuperamos el estado actual de la localización para mostrarlo al usuario
+    loc = get_current_coords()
+    
+    # Lógica visual: Icono distinto si es GPS real o Default
+    if loc.get("source") == "gps":
+        source_icon = "🛰️" 
+        loc_label = "Ubicación Actual"
+    else:
+        source_icon = "🏢"
+        loc_label = "Santiago (Default)"
+        
+    # Mostramos las coordenadas con 4 decimales
+    st.caption(f"{source_icon} **{loc_label}**: {loc['lat']:.4f}, {loc['lon']:.4f}")
+    # -----------------------------------------
+
+    # 2. Obtener Datos (Services)
     with st.spinner("Consultando satélites..."):
         weather_df = get_weather_forecast()
     
@@ -584,19 +665,19 @@ def render_dashboard():
         st.error("No pudimos conectar con el servicio de clima. Revisa tu conexión.")
         return
 
-    # 2. Obtener Recomendación (Logic)
+    # 3. Obtener Recomendación (Logic)
     rec = get_recommendation(weather_df)
     
     if not rec:
         st.error("Error calculando la recomendación.")
         return
 
-    # 3. UI: Header con Contexto Temporal
+    # 4. UI: Header con Contexto Temporal
     # Usamos colores semánticos: Mañana (Azul/Día) vs Tarde (Naranja/Atardecer)
     mode_color = "blue" if rec['mode'] == "Mañana" else "orange"
     st.markdown(f":{mode_color}[**MODO {rec['mode'].upper()}**]")
     
-    # 4. UI: La Recomendación Principal (Big Number)
+    # 5. UI: La Recomendación Principal (Big Number)
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -613,13 +694,13 @@ def render_dashboard():
         st.write(f"🌡️ Max: {rec['temp_max']}°C")
         st.write(f"❄️ Min: {rec['temp_min']}°C")
 
-    # 5. UI: Razón de la decisión
+    # 6. UI: Razón de la decisión
     if "Alerta" in rec['reasoning']:
         st.warning(rec['reasoning']) # Amarillo si es por lluvia
     else:
         st.caption(f"💡 Razón: {rec['reasoning']}")
 
-    # 6. UI: Sección de Feedback (Pasamos los datos de AYER - fila 0)
+    # 7. UI: Sección de Feedback (Pasamos los datos de AYER - fila 0)
     # Solo mostramos feedback si estamos en modo mañana o si el usuario quiere
     yesterday_row = weather_df.iloc[0]
     render_feedback_section(yesterday_row)
@@ -627,11 +708,10 @@ def render_dashboard():
 FILE: .\ui\feedback.py
 ==================================================
 import streamlit as st
-import pandas as pd
-from logic.training import train_model
+import datetime
+from logic.training import sync_model_with_db # <--- CAMBIO CLAVE
 from services.db import save_feedback_history
 from config import settings
-import datetime
 
 def render_feedback_section(yesterday_row):
     """
@@ -661,9 +741,7 @@ def render_feedback_section(yesterday_row):
             submit_btn = st.form_submit_button("Corregir y Aprender")
             
             if submit_btn:
-                # --- EXTRACCIÓN DE DATOS ---
-                # Ahora usamos las claves SIMPLIFICADAS que definimos en weather_api.py
-                
+                # 1. Guardar en la Nube (La verdad absoluta)
                 saved_cloud = save_feedback_history(
                     date_ref=yesterday_date,
                     t_max=yesterday_row['temp_max'],
@@ -674,7 +752,7 @@ def render_feedback_section(yesterday_row):
                     precip=yesterday_row.get('precipitation_sum', 0.0),
                     w_code=yesterday_row.get('weathercode', 0),
                     
-                    # Datos Nuevos (Nombres coincidentes con weather_api)
+                    # Datos Nuevos
                     t_mean=yesterday_row.get('temp_mean', 0.0),
                     hum_mean=yesterday_row.get('humidity_mean', 0.0),
                     wind_max=yesterday_row.get('windspeed_max', 0.0),
@@ -685,19 +763,80 @@ def render_feedback_section(yesterday_row):
                 )
 
                 if saved_cloud:
-                    st.toast("✅ Datos guardados correctamente en la nube", icon="☁️")
+                    st.toast("✅ Datos guardados en la nube.", icon="☁️")
+                    
+                    # 2. Re-entrenamiento CORRECTO (Descargar todo + Entrenar)
+                    with st.spinner("Re-calibrando neuronas con el nuevo dato..."):
+                        try:
+                            # Reutilizamos la lógica robusta de sincronización
+                            success = sync_model_with_db() 
+                            if success:
+                                st.success("¡Modelo actualizado! Tu asistente es más inteligente.")
+                            else:
+                                st.warning("Datos guardados, pero el re-entrenamiento falló.")
+                        except Exception as e:
+                            st.error(f"Error en re-entrenamiento: {e}")
                 else:
-                    st.error("⚠️ Error guardando en Supabase, pero entrenaremos localmente.")
+                    st.error("⚠️ Error conectando con Supabase. Intenta más tarde.")
+==================================================
+FILE: .\ui\pwa.py
+==================================================
+import streamlit as st
+import json
+import base64
 
-                # Entrenamiento local (Solo usa Temps)
-                training_data = pd.DataFrame([{
-                    "temp_max": yesterday_row['temp_max'],
-                    "temp_min": yesterday_row['temp_min'],
-                    "clothing_level": selected_level
-                }])
-                
-                try:
-                    train_model(training_data)
-                    st.success("Modelo local actualizado.")
-                except Exception as e:
-                    st.error(f"Error entrenamiento local: {e}")
+def inject_pwa_metadata():
+    """
+    Inyecta las metaetiquetas y el manifiesto PWA en el header de la app.
+    Usa el truco de Base64 para evitar tener que configurar un servidor de estáticos.
+    """
+    
+    # 1. Definición del Manifiesto (Configuración de la App)
+    # NOTA: Cambia 'src' por la URL de tu propio icono si lo subes a Supabase o GitHub.
+    # Por ahora usaremos un icono de clima genérico de alta calidad.
+    APP_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4052/4052984.png"
+    
+    manifest = {
+        "name": "WeatherWear",
+        "short_name": "IsiWear",
+        "description": "Tu asistente de vestuario inteligente",
+        "start_url": "/",
+        "display": "standalone", # Esto quita la barra del navegador
+        "background_color": "#0e1117", # Color de fondo Streamlit Dark
+        "theme_color": "#0e1117",      # Color de la barra de estado móvil
+        "icons": [
+            {
+                "src": APP_ICON_URL,
+                "sizes": "192x192",
+                "type": "image/png"
+            },
+            {
+                "src": APP_ICON_URL,
+                "sizes": "512x512",
+                "type": "image/png"
+            }
+        ]
+    }
+
+    # 2. Convertir Manifiesto a Data URI (Base64)
+    manifest_json = json.dumps(manifest)
+    b64_manifest = base64.b64encode(manifest_json.encode()).decode()
+    manifest_href = f"data:application/manifest+json;base64,{b64_manifest}"
+
+    # 3. HTML para inyectar en el <head>
+    # Incluye soporte especial para iOS (Apple no lee el manifest igual que Android)
+    pwa_html = f"""
+        <link rel="manifest" href="{manifest_href}" />
+        <meta name="theme-color" content="#0e1117" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <link rel="apple-touch-icon" href="{APP_ICON_URL}" />
+        <style>
+            /* Opcional: Ajustes CSS para que se sienta más 'app' */
+            header[data-testid="stHeader"] {{ visibility: hidden; }} /* Oculta el header de Streamlit */
+            .main {{ padding-top: 2rem; }}
+        </style>
+    """
+
+    # 4. Inyección Insegura (Necesaria para esto)
+    st.markdown(pwa_html, unsafe_allow_html=True)

@@ -57,7 +57,7 @@ def get_recommendation(weather_df):
     if is_raining:
         # Lluvia fuerza nivel 3 (Abrigo/Impermeable) como mínimo
         suggested_level = 3
-        reasoning = f"⚠️ Alerta de lluvia ({rain_prob}% / {rain_mm}mm). Mejor prevenir."
+        reasoning = f"⚠️ Alerta de lluvia ({round(rain_prob, 1)}% / {round(rain_mm, 1)}mm). Mejor prevenir."
     else:
         # --- 4. INFERENCIA CON MODELO KNN (IA) ---
         knn = load_model()
