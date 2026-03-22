@@ -1,6 +1,6 @@
 import streamlit as st
 
-# --- 1. CONFIGURACIÓN PRIMERO (CRÍTICO: Debe ser la primera instrucción Streamlit) ---
+# --- 1. CONFIGURACIÓN PRIMERO (CRÍTICO: Debe ser la primera instrucción) ---
 st.set_page_config(
     page_title="IsiWear",
     page_icon="🧣",
@@ -18,23 +18,19 @@ from logic.training import sync_model_with_db
 from ui.dashboard import render_dashboard
 from services.location import initialize_user_location
 from ui.pwa import inject_pwa_metadata
-from streamlit_cookies_controller import CookieController
-
-# Inicializamos el controlador de cookies después de set_page_config
-cookie_controller = CookieController()
 
 def check_password():
-    """Verifica si Isi tiene la cookie activa o ingresa la clave correcta."""
+    """Verifica si Isi tiene el enlace mágico o ingresa la clave correcta."""
     
-    # 1. Revisar si la cookie ya existe en su navegador
-    if cookie_controller.get("isiwear_auth") == "true":
+    # 1. Revisar si la clave mágica está escondida en la URL
+    if st.query_params.get("pwd") == st.secrets["APP_PASSWORD"]:
         return True
 
     # 2. Revisar la memoria a corto plazo
     if st.session_state.get("password_correct", False):
         return True
 
-    # 3. Si no hay cookie ni sesión, pedimos la clave
+    # 3. Si no hay link especial ni sesión, pedimos la clave manual
     st.title("IsiWear 🧣")
     st.write("Por favor, ingresa tu contraseña para entrar:")
     
@@ -45,8 +41,8 @@ def check_password():
             # Guardamos en la sesión actual
             st.session_state["password_correct"] = True
             
-            # Guardamos la cookie por 30 días (2,592,000 segundos)
-            cookie_controller.set("isiwear_auth", "true", max_age=2592000) 
+            # ¡LA MAGIA! Inyectamos la clave en la URL automáticamente
+            st.query_params["pwd"] = clave
             
             st.rerun()
         else:
