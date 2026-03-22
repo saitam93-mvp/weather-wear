@@ -1,0 +1,32 @@
+name: Bot Matutino IsiWear
+
+on:
+  schedule:
+    # 10:30 UTC equivale a las 07:30 AM en Chile (en invierno se ajustará a 06:30 AM)
+    # El "1-5" significa que solo se ejecuta de Lunes a Viernes.
+    - cron: '00 10 * * 1-5'
+  workflow_dispatch: # Esto te permite ejecutarlo a mano con un botón para probarlo
+
+jobs:
+  enviar_correo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar librerías
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar la IA y enviar correo
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python enviar_correo.py

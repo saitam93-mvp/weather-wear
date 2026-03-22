@@ -37,14 +37,14 @@ def get_recommendation(weather_df):
         ref_row = weather_df.iloc[0]    # Ayer
         time_label = "hoy"
         ref_label = "ayer"
-        mode_text = "Mañana"
+        mode_text = "Para hoy"
     else:
         # Modo Tarde: ¿Qué preparo para MAÑANA? (Comparado con HOY)
         target_row = weather_df.iloc[2] # Mañana
         ref_row = weather_df.iloc[1]    # Hoy
         time_label = "mañana"
         ref_label = "hoy"
-        mode_text = "Tarde"
+        mode_text = "Para mañana"
 
     # --- 3. REGLA DE LLUVIA (VETO DURO) ---
     # Si la probabilidad es alta O la cantidad es significativa, ignoramos el modelo KNN
