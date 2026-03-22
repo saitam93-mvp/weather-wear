@@ -2,10 +2,16 @@ import os
 import smtplib
 from email.message import EmailMessage
 
-# --- TRUCO DE CONTEXTO ---
+# --- TRUCO DE CONTEXTO ACTUALIZADO ---
 # Engañamos a Python para que no falle al buscar "st.session_state" por fuera de la web
-from streamlit.runtime.scriptrunner.script_run_context import add_script_run_ctx
 from threading import current_thread
+try:
+    # Ruta para versiones antiguas de Streamlit
+    from streamlit.runtime.scriptrunner.script_run_context import add_script_run_ctx
+except ModuleNotFoundError:
+    # Ruta para versiones nuevas de Streamlit
+    from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_ctx
+
 add_script_run_ctx(current_thread())
 
 import streamlit as st
