@@ -28,7 +28,7 @@ def get_weather_forecast():
         "latitude": lat,
         "longitude": lon,
         "past_days": 1,     # CRÍTICO para tener datos de "Ayer"
-        "forecast_days": 3, 
+        "forecast_days": 8, 
         "timezone": "auto", # CRÍTICO para calcular hora local correctamente
         "daily": [
             "temperature_2m_max", 

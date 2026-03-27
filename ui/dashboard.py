@@ -79,8 +79,6 @@ def render_dashboard():
         with c3:
             st.write(f"🧣 **Nivel {day['level']}**")
             st.caption(day['level_text'])
-            
-    st.divider()
 
     # 8. UI: Sección de Feedback
     yesterday_row = weather_df.iloc[0]
