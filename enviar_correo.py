@@ -1,3 +1,18 @@
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# --- GUARDIA DE ZONA HORARIA ---
+zona_stgo = ZoneInfo("America/Santiago")
+hora_stgo = datetime.now(zona_stgo)
+
+# Si la hora actual en Santiago NO son las 6 de la mañana, cancelamos la ejecución
+if hora_stgo.hour != 6:
+    print(f"Zzz... Son las {hora_stgo.strftime('%H:%M')} en Santiago. El correo solo sale a las 6 AM. Abortando.")
+    sys.exit(0) 
+
+print("¡Son las 6 AM en Santiago! Procediendo a preparar el correo...")
+
 import os
 import smtplib
 from email.message import EmailMessage

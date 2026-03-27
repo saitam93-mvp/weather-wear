@@ -4,7 +4,7 @@ on:
   schedule:
     # 10:30 UTC equivale a las 07:30 AM en Chile (en invierno se ajustará a 06:30 AM)
     # El "1-5" significa que solo se ejecuta de Lunes a Viernes.
-    - cron: '00 10 * * 1-5'
+    - cron: '30 9,10 * * 1-5'
   workflow_dispatch: # Esto te permite ejecutarlo a mano con un botón para probarlo
 
 jobs:
