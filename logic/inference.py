@@ -125,6 +125,8 @@ def get_weekly_recommendations(weather_df):
             "fecha": fecha.strftime("%d/%m"),
             "temp_max": round(row['temp_max']),
             "temp_min": round(row['temp_min']),
+            "rain_prob": int(rain_prob), 
+            "rain_mm": round(rain_mm, 1),
             "level": level,
             "level_text": settings.CLOTHING_LEVELS.get(level, f"Nivel {level}")
         })
