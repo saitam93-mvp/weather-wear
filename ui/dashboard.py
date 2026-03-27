@@ -41,7 +41,7 @@ def render_dashboard():
                 del st.session_state["manual_loc"]
                 st.rerun()
                 
-        search_query = st.text_input("Escribe una ciudad (ej. Villa O'Higgins, Tokio):")
+        search_query = st.text_input("Escribe una ciudad (ej. Tangananica, Tanganana):")
         if search_query:
             with st.spinner("Buscando en el mapa..."):
                 results = geocode_city(search_query)
@@ -105,33 +105,48 @@ def render_dashboard():
     else:
         st.caption(f"💡 Razón: {rec['reasoning']}")
 
-    # 7. UI: PRONÓSTICO SEMANAL (NUEVO)
+# 7. UI: PRONÓSTICO SEMANAL
     st.divider()
     st.subheader("📅 Próximos 7 días")
     
     weekly_forecast = get_weekly_recommendations(weather_df)
     
+    # Construimos una lista de tarjetas usando HTML/CSS para forzar 
+    # que se mantengan en una sola fila en celulares (evita el colapso de columnas).
+    html_cards = ""
     for day in weekly_forecast:
-        # Ajustamos un poco los anchos de las columnas para que respire mejor
-        c1, c2, c3 = st.columns([1.2, 1.8, 2]) 
+        # Simplificamos el texto de lluvia para que ocupe menos espacio
+        if day['rain_prob'] > 0 or day['rain_mm'] > 0:
+            rain_text = f"☔ {day['rain_prob']}% ({day['rain_mm']}mm)"
+        else:
+            rain_text = "☀️ Despejado"
+            
+        # Extraemos solo la palabra clave del nivel (Ej: de "Nivel 2: Intermedio (Ropa)" sacamos "Intermedio")
+        if ':' in day['level_text'] and '(' in day['level_text']:
+            level_desc = day['level_text'].split(':')[1].split('(')[0].strip()
+        else:
+            level_desc = day['level_text']
+            
+        html_cards += f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; 
+                    background-color: rgba(150, 150, 150, 0.1); padding: 12px 15px; 
+                    border-radius: 10px; margin-bottom: 10px;">
+            <div style="flex: 1.2; line-height: 1.4;">
+                <strong style="font-size: 15px;">{day['dia']}</strong><br>
+                <span style="font-size: 13px; opacity: 0.7;">{day['fecha']}</span>
+            </div>
+            <div style="flex: 1.5; text-align: center; line-height: 1.4;">
+                <span style="font-size: 15px;">🌡️ {day['temp_max']}° / {day['temp_min']}°</span><br>
+                <span style="font-size: 13px; opacity: 0.7;">{rain_text}</span>
+            </div>
+            <div style="flex: 1.3; text-align: right; line-height: 1.4;">
+                <strong style="font-size: 14px; color: var(--primary-color);">🧣 Nivel {day['level']}</strong><br>
+                <span style="font-size: 11px; opacity: 0.7;">{level_desc}</span>
+            </div>
+        </div>
+        """
         
-        with c1:
-            st.write(f"**{day['dia']}**")
-            st.caption(day['fecha'])
-            
-        with c2:
-            # Temperaturas juntas en una línea
-            st.write(f"🌡️ {day['temp_max']}° / {day['temp_min']}°")
-            
-            # Mostramos lluvia solo si hay probabilidad o milímetros, sino un solcito
-            if day['rain_prob'] > 0 or day['rain_mm'] > 0:
-                st.caption(f"☔ {day['rain_prob']}% ({day['rain_mm']} mm)")
-            else:
-                st.caption("☀️ Sin lluvia")
-                
-        with c3:
-            st.write(f"🧣 **Nivel {day['level']}**")
-            st.caption(day['level_text'])
+    st.markdown(html_cards, unsafe_allow_html=True)
 
     # 8. UI: Sección de Feedback
     yesterday_row = weather_df.iloc[0]
