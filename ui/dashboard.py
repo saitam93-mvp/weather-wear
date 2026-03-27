@@ -1,17 +1,16 @@
 import streamlit as st
 from services.weather_api import get_weather_forecast
-from logic.inference import get_recommendation
+# Importamos la nueva función del pronóstico semanal
+from logic.inference import get_recommendation, get_weekly_recommendations 
 from ui.feedback import render_feedback_section
-from services.location import get_current_coords # <--- NUEVO IMPORT
+from services.location import get_current_coords
 
 def render_dashboard():
     st.title("IsiWear 🧣")
     
-    # --- 1. INDICADOR DE UBICACIÓN (NUEVO) ---
-    # Recuperamos el estado actual de la localización para mostrarlo al usuario
+    # 1. INDICADOR DE UBICACIÓN
     loc = get_current_coords()
     
-    # Lógica visual: Icono distinto si es GPS real o Default
     if loc.get("source") == "gps":
         source_icon = "🛰️" 
         loc_label = "Ubicación Actual"
@@ -19,11 +18,9 @@ def render_dashboard():
         source_icon = "🏢"
         loc_label = "Santiago (Default)"
         
-    # Mostramos las coordenadas con 4 decimales
     st.caption(f"{source_icon} **{loc_label}**: {loc['lat']:.4f}, {loc['lon']:.4f}")
-    # -----------------------------------------
 
-    # 2. Obtener Datos (Services)
+    # 2. Obtener Datos
     with st.spinner("Consultando satélites..."):
         weather_df = get_weather_forecast()
     
@@ -31,7 +28,7 @@ def render_dashboard():
         st.error("No pudimos conectar con el servicio de clima. Revisa tu conexión.")
         return
 
-    # 3. Obtener Recomendación (Logic)
+    # 3. Obtener Recomendación Principal
     rec = get_recommendation(weather_df)
     
     if not rec:
@@ -39,19 +36,18 @@ def render_dashboard():
         return
 
     # 4. UI: Header con Contexto Temporal
-    # Usamos colores semánticos: Mañana (Azul/Día) vs Tarde (Naranja/Atardecer)
     mode_color = "blue" if rec['mode'] == "Mañana" else "orange"
     st.markdown(f":{mode_color}[**MODO {rec['mode'].upper()}**]")
     
-    # 5. UI: La Recomendación Principal (Big Number)
+    # 5. UI: La Recomendación Principal
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.metric(
             label="Nivel Recomendado",
             value=f"Nivel {rec['level']}",
-            delta=rec['context'], # Ej: "3°C más frío que ayer"
-            delta_color="off"     # Gris neutro, ya que es informativo
+            delta=rec['context'],
+            delta_color="off"
         )
         st.info(f"**{rec['level_text']}**")
 
@@ -62,11 +58,30 @@ def render_dashboard():
 
     # 6. UI: Razón de la decisión
     if "Alerta" in rec['reasoning']:
-        st.warning(rec['reasoning']) # Amarillo si es por lluvia
+        st.warning(rec['reasoning'])
     else:
         st.caption(f"💡 Razón: {rec['reasoning']}")
 
-    # 7. UI: Sección de Feedback (Pasamos los datos de AYER - fila 0)
-    # Solo mostramos feedback si estamos en modo mañana o si el usuario quiere
+    # 7. UI: PRONÓSTICO SEMANAL (NUEVO)
+    st.divider()
+    st.subheader("📅 Próximos 7 días")
+    
+    weekly_forecast = get_weekly_recommendations(weather_df)
+    
+    for day in weekly_forecast:
+        c1, c2, c3 = st.columns([1.5, 1.5, 2])
+        with c1:
+            st.write(f"**{day['dia']}**")
+            st.caption(day['fecha'])
+        with c2:
+            st.write(f"🔼 {day['temp_max']}°")
+            st.write(f"🔽 {day['temp_min']}°")
+        with c3:
+            st.write(f"🧣 **Nivel {day['level']}**")
+            st.caption(day['level_text'])
+            
+    st.divider()
+
+    # 8. UI: Sección de Feedback
     yesterday_row = weather_df.iloc[0]
     render_feedback_section(yesterday_row)
