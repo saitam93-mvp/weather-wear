@@ -102,4 +102,31 @@ def get_weekly_recommendations(weather_df):
         is_raining = (rain_prob >= settings.RAIN_PROB_THRESHOLD) or \
                      (rain_mm >= settings.RAIN_AMOUNT_THRESHOLD)
 
-        if is_raining
+        if is_raining:
+            level = 3
+        else:
+            if knn:
+                X_in = prepare_features(row.to_frame().T, is_training=False)
+                level = int(knn.predict(X_in)[0])
+            else:
+                level = 2
+
+        # Formateo de fechas
+        fecha = pd.to_datetime(row['date'])
+        nombre_dia = dias_espanol[fecha.weekday()]
+
+        if idx == 1:
+            nombre_dia = "Hoy"
+        elif idx == 2:
+            nombre_dia = "Mañana"
+
+        weekly_data.append({
+            "dia": nombre_dia,
+            "fecha": fecha.strftime("%d/%m"),
+            "temp_max": round(row['temp_max']),
+            "temp_min": round(row['temp_min']),
+            "level": level,
+            "level_text": settings.CLOTHING_LEVELS.get(level, f"Nivel {level}")
+        })
+
+    return weekly_data
