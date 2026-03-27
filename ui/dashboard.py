@@ -69,13 +69,23 @@ def render_dashboard():
     weekly_forecast = get_weekly_recommendations(weather_df)
     
     for day in weekly_forecast:
-        c1, c2, c3 = st.columns([1.5, 1.5, 2])
+        # Ajustamos un poco los anchos de las columnas para que respire mejor
+        c1, c2, c3 = st.columns([1.2, 1.8, 2]) 
+        
         with c1:
             st.write(f"**{day['dia']}**")
             st.caption(day['fecha'])
+            
         with c2:
-            st.write(f"🔼 {day['temp_max']}°")
-            st.write(f"🔽 {day['temp_min']}°")
+            # Temperaturas juntas en una línea
+            st.write(f"🌡️ {day['temp_max']}° / {day['temp_min']}°")
+            
+            # Mostramos lluvia solo si hay probabilidad o milímetros, sino un solcito
+            if day['rain_prob'] > 0 or day['rain_mm'] > 0:
+                st.caption(f"☔ {day['rain_prob']}% ({day['rain_mm']} mm)")
+            else:
+                st.caption("☀️ Sin lluvia")
+                
         with c3:
             st.write(f"🧣 **Nivel {day['level']}**")
             st.caption(day['level_text'])
