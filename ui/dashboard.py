@@ -105,7 +105,7 @@ def render_dashboard():
     else:
         st.caption(f"💡 Razón: {rec['reasoning']}")
 
-# 7. UI: PRONÓSTICO SEMANAL
+    # 7. UI: PRONÓSTICO SEMANAL
     st.divider()
     st.subheader("📅 Próximos 7 días")
     
