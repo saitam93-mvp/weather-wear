@@ -1,17 +1,30 @@
 import streamlit as st
+import requests # Necesario para buscar la ciudad
 from services.weather_api import get_weather_forecast
-# Importamos la nueva función del pronóstico semanal
 from logic.inference import get_recommendation, get_weekly_recommendations 
 from ui.feedback import render_feedback_section
 from services.location import get_current_coords
 
+def geocode_city(city_name):
+    """Busca las coordenadas de una ciudad usando la API gratuita de Open-Meteo."""
+    try:
+        url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=5&language=es&format=json"
+        res = requests.get(url).json()
+        return res.get("results", [])
+    except Exception:
+        return []
+
 def render_dashboard():
     st.title("IsiWear 🧣")
     
-    # 1. INDICADOR DE UBICACIÓN
+    # --- 1. INDICADOR Y SELECTOR DE UBICACIÓN ---
     loc = get_current_coords()
     
-    if loc.get("source") == "gps":
+    # Determinamos el icono y nombre según el origen
+    if loc.get("source") == "manual":
+        source_icon = "📍"
+        loc_label = loc.get("name", "Ubicación Seleccionada")
+    elif loc.get("source") == "gps":
         source_icon = "🛰️" 
         loc_label = "Ubicación Actual"
     else:
@@ -20,8 +33,38 @@ def render_dashboard():
         
     st.caption(f"{source_icon} **{loc_label}**: {loc['lat']:.4f}, {loc['lon']:.4f}")
 
-    # 2. Obtener Datos
+    # Buscador desplegable para cambiar ubicación
+    with st.expander("🔎 Cambiar de ciudad"):
+        # Botón para limpiar la búsqueda y volver al GPS original
+        if loc.get("source") == "manual":
+            if st.button("🛰️ Volver a mi ubicación automática"):
+                del st.session_state["manual_loc"]
+                st.rerun()
+                
+        search_query = st.text_input("Escribe una ciudad (ej. Villa O'Higgins, Tokio):")
+        if search_query:
+            with st.spinner("Buscando en el mapa..."):
+                results = geocode_city(search_query)
+                if results:
+                    for r in results:
+                        # Armamos el texto del botón (Ej: Valdivia, Los Ríos, Chile)
+                        city_text = f"{r['name']}, {r.get('admin1', '')}, {r.get('country', '')}".strip(", ")
+                        if st.button(f"📍 {city_text}", key=r['id']):
+                            # Guardamos la nueva ciudad en la memoria temporal
+                            st.session_state["manual_loc"] = {
+                                "lat": r["latitude"],
+                                "lon": r["longitude"],
+                                "source": "manual",
+                                "name": r["name"]
+                            }
+                            st.rerun() # Recargamos la app con la nueva ciudad
+                else:
+                    st.warning("No encontramos esa ciudad. Intenta con otro nombre.")
+
+    # --- 2. Obtener Datos (Services) ---
     with st.spinner("Consultando satélites..."):
+        # Nota: Si tu función get_weather_forecast requiere que le pases lat y lon, 
+        # asegúrate de ponerlos aquí: get_weather_forecast(loc['lat'], loc['lon'])
         weather_df = get_weather_forecast()
     
     if weather_df.empty:

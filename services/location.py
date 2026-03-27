@@ -40,6 +40,9 @@ def initialize_user_location():
     return st.session_state["user_location"]
 
 def get_current_coords():
+    #Si hay una ubicación manual guardada en sesión, la usamos
+    if "manual_loc" in st.session_state:
+        return st.session_state["manual_loc"]
     """Retorna las coordenadas actuales (sean GPS o Default)"""
     # Si por alguna razón se llama antes de init, devuelve default
     return st.session_state.get("user_location", {
