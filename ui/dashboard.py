@@ -101,11 +101,14 @@ def render_dashboard():
         return
 
     # --- 4. UI: Header con Contexto Temporal ---
-    mode_color = "blue" if rec['mode'] == "Mañana" else "orange"
+    # Detectamos si estamos evaluando el clima de "Hoy" o "Mañana"
+    es_modo_manana = "mañana" in rec['mode'].lower()
+    mode_color = "blue" if es_modo_manana else "orange"
     st.markdown(f":{mode_color}[**MODO {rec['mode'].upper()}**]")
     
     # --- 5. UI: La Recomendación Principal ---
-    col1, col2 = st.columns([2, 1])
+    # Dividimos en 3 columnas para hacer espacio a los datos de referencia
+    col1, col2, col3 = st.columns([1.8, 1.1, 1.1])
     
     with col1:
         st.metric(
@@ -117,9 +120,21 @@ def render_dashboard():
         st.info(f"**{rec['level_text']}**")
 
     with col2:
-        st.write("Pronóstico:")
+        # El clima que estamos pronosticando
+        titulo_obj = "Mañana" if es_modo_manana else "Hoy"
+        st.write(f"**Pronóstico ({titulo_obj}):**")
         st.write(f"🌡️ Max: {rec['temp_max']}°C")
         st.write(f"❄️ Min: {rec['temp_min']}°C")
+
+    with col3:
+        # El clima que usamos para comparar (Ayer o Hoy)
+        titulo_ref = "Hoy" if es_modo_manana else "Ayer"
+        # iloc[1] es Hoy, iloc[0] es Ayer
+        ref_row = weather_df.iloc[1] if es_modo_manana else weather_df.iloc[0] 
+        
+        st.write(f"**Referencia ({titulo_ref}):**")
+        st.write(f"🌡️ Max: {ref_row['temp_max']}°C")
+        st.write(f"❄️ Min: {ref_row['temp_min']}°C")
 
     # --- 6. UI: Razón de la decisión ---
     if "Alerta" in rec['reasoning']:
