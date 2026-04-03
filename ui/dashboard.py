@@ -210,6 +210,5 @@ def render_dashboard():
         
     st.markdown(html_cards, unsafe_allow_html=True)
 
-    st.divider()
     yesterday_row = weather_df.iloc[0]
     render_feedback_section(yesterday_row)
