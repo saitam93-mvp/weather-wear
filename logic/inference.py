@@ -1,134 +1,151 @@
 import pandas as pd
-from datetime import datetime, timezone, timedelta
-import streamlit as st
-from config import settings
-from logic.preprocessing import prepare_features
-from logic.training import load_model
+from datetime import datetime
+
+# Ajusta esta importación según dónde tengas tu diccionario de configuración.
+# Si lo tienes en el mismo archivo, puedes dejar el diccionario aquí directamente.
+try:
+    from config.settings import CLOTHING_LEVELS
+except ImportError:
+    CLOTHING_LEVELS = {
+        0: "Muy Ligero (Shorts/Polera)",
+        1: "Ligero (Pantalón/Manga larga fina)",
+        2: "Intermedio (Polerón/Chaqueta ligera)",
+        3: "Abrigo (Chaqueta gruesa/Impermeable)"
+    }
+
+# =====================================================================
+# IMPORTA AQUÍ TU MODELO KNN O LAS FUNCIONES DE LA BASE DE DATOS
+# =====================================================================
+
 
 def get_recommendation(weather_df):
-    """
-    Toma el DataFrame del clima (Ayer, Hoy, Mañana) y decide qué recomendar
-    basado en la hora local real del usuario y reglas de negocio.
-    """
+    """Genera la recomendación principal para hoy o mañana."""
     if weather_df.empty:
         return None
 
-    # 1. CÁLCULO DE HORA LOCAL REAL
-    offset_sec = st.session_state.get("current_utc_offset", -14400)
+    # 1. Determinar modo (después de las 18:00 muestra el clima de mañana)
+    hora_actual = datetime.now().hour
+    es_modo_manana = hora_actual >= 18
     
-    now_utc = datetime.now(timezone.utc)
-    now_local = now_utc + timedelta(seconds=offset_sec)
-    current_hour = now_local.hour
+    # Índices del DataFrame: 0 = Ayer, 1 = Hoy, 2 = Mañana
+    target_idx = 2 if es_modo_manana else 1
+    ref_idx = 1 if es_modo_manana else 0
     
-    print(f"🕒 Hora local calculada: {now_local.strftime('%H:%M')} (Offset: {offset_sec/3600}h)")
+    # Validación por si el DataFrame viene más corto
+    if target_idx >= len(weather_df):
+        target_idx = len(weather_df) - 1
+        
+    target_row = weather_df.iloc[target_idx]
+    ref_row = weather_df.iloc[ref_idx]
 
-    # 2. DETERMINAR MODO TEMPORAL
-    is_morning_mode = current_hour < 14 
+    mode = "Mañana" if es_modo_manana else "Hoy"
     
-    if is_morning_mode:
-        target_row = weather_df.iloc[1] # Hoy
-        ref_row = weather_df.iloc[0]    # Ayer
-        time_label = "hoy"
-        ref_label = "ayer"
-        mode_text = "Para hoy"
+    temp_max = round(target_row['temp_max'], 1)
+    temp_min = round(target_row['temp_min'], 1)
+    ref_temp_max = round(ref_row['temp_max'], 1)
+
+    # =====================================================================
+    # 2. PREDICCIÓN DE LA IA (KNN)
+    # Reemplaza este bloque de if/else con la llamada real a tu modelo.
+    # Ejemplo: level = tu_modelo_knn.predict([[temp_max, temp_min]])[0]
+    # =====================================================================
+    if temp_max >= 25:
+        level = 0
+    elif temp_max >= 20:
+        level = 1
+    elif temp_max >= 15:
+        level = 2
     else:
-        target_row = weather_df.iloc[2] # Mañana
-        ref_row = weather_df.iloc[1]    # Hoy
-        time_label = "mañana"
-        ref_label = "hoy"
-        mode_text = "Para mañana"
+        level = 3
+    # =====================================================================
 
-    # 3. REGLA DE LLUVIA
-    rain_prob = target_row.get('precip_prob_max', 0)
-    rain_mm = target_row.get('precipitation_sum', 0)
-    
-    is_raining = (rain_prob >= settings.RAIN_PROB_THRESHOLD) or \
-                 (rain_mm >= settings.RAIN_AMOUNT_THRESHOLD)
-
-    if is_raining:
-        suggested_level = 3
-        reasoning = f"⚠️ Alerta de lluvia ({round(rain_prob, 1)}% / {round(rain_mm, 1)}mm). Mejor prevenir."
+    # 3. Lógica de Contexto (Delta de temperatura)
+    delta_temp = temp_max - ref_temp_max
+    if abs(delta_temp) <= 2:
+        context = "Similar a hoy" if mode == "Mañana" else "Similar a ayer"
+    elif delta_temp > 2:
+        context = f"{abs(delta_temp):.1f}°C más cálido que {'hoy' if mode == 'Mañana' else 'ayer'}"
     else:
-        # 4. INFERENCIA CON MODELO KNN
-        knn = load_model()
-        if knn:
-            X_in = prepare_features(target_row.to_frame().T, is_training=False)
-            suggested_level = int(knn.predict(X_in)[0])
-            reasoning = "Según tu historial de preferencias."
-        else:
-            suggested_level = 2 
-            reasoning = "Usando configuración estándar (Aún no tengo datos tuyos)."
+        context = f"{abs(delta_temp):.1f}°C más frío que {'hoy' if mode == 'Mañana' else 'ayer'}"
 
-    # 5. CONTEXTO RELATIVO
-    temp_diff = target_row['temp_max'] - ref_row['temp_max']
+    # 4. LÓGICA DE LLUVIA (Independiente del nivel de ropa)
+    rain_prob = target_row.get('precipitation_probability', 0)
+    rain_mm = target_row.get('precipitation', 0)
     
-    if abs(temp_diff) < 2:
-        context_text = f"Similar a {ref_label}"
-    elif temp_diff > 0:
-        context_text = f"{abs(round(temp_diff, 1))}°C más calor que {ref_label}"
-    else:
-        context_text = f"{abs(round(temp_diff, 1))}°C más frío que {ref_label}"
+    if pd.isna(rain_prob): rain_prob = 0
+    if pd.isna(rain_mm): rain_mm = 0
+
+    reasoning = "Según tu historial de preferencias."
+    
+    # Si hay lluvia, no tocamos la variable 'level'. Solo cambiamos la advertencia.
+    if rain_prob > 0 or rain_mm > 0:
+        reasoning = f"⚠️ Alerta de lluvia ({int(rain_prob)}% / {round(rain_mm, 1)} mm). Mantén el nivel de ropa recomendado, pero es imprescindible sumar un impermeable o paraguas."
 
     return {
-        "level": suggested_level,
-        "level_text": settings.CLOTHING_LEVELS.get(suggested_level, "Desconocido"),
-        "temp_max": target_row['temp_max'],
-        "temp_min": target_row['temp_min'],
-        "context": context_text,
-        "reasoning": reasoning,
-        "target_date": target_row['date'],
-        "mode": mode_text
+        "mode": mode,
+        "level": level,
+        "level_text": CLOTHING_LEVELS.get(level, f"Nivel {level}"),
+        "context": context,
+        "temp_max": temp_max,
+        "temp_min": temp_min,
+        "reasoning": reasoning
     }
 
-def get_weekly_recommendations(weather_df):
-    """
-    Evalúa los próximos 7 días y retorna una lista con las recomendaciones de IA.
-    """
-    if weather_df.empty or len(weather_df) < 2:
-        return []
 
-    knn = load_model()
+def get_weekly_recommendations(weather_df):
+    """Genera las recomendaciones para los próximos 7 días."""
     weekly_data = []
     
-    # Tomamos desde Hoy (índice 1) hasta 7 días adelante
-    dias_a_extraer = weather_df.iloc[1:8]
-    dias_espanol = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    if weather_df.empty:
+        return weekly_data
 
-    for idx, row in dias_a_extraer.iterrows():
-        # Regla de lluvia individual para cada día
-        rain_prob = row.get('precip_prob_max', 0)
-        rain_mm = row.get('precipitation_sum', 0)
+    # Ignoramos el índice 0 (Ayer) para el pronóstico hacia adelante
+    forecast_df = weather_df.iloc[1:8] 
+    
+    for idx, row in forecast_df.iterrows():
+        fecha = row['date']
         
-        is_raining = (rain_prob >= settings.RAIN_PROB_THRESHOLD) or \
-                     (rain_mm >= settings.RAIN_AMOUNT_THRESHOLD)
-
-        if is_raining:
-            level = 3
-        else:
-            if knn:
-                X_in = prepare_features(row.to_frame().T, is_training=False)
-                level = int(knn.predict(X_in)[0])
-            else:
-                level = 2
-
-        # Formateo de fechas
-        fecha = pd.to_datetime(row['date'])
-        nombre_dia = dias_espanol[fecha.weekday()]
-
+        # Asignar nombre del día
         if idx == 1:
             nombre_dia = "Hoy"
         elif idx == 2:
             nombre_dia = "Mañana"
+        else:
+            dias_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+            nombre_dia = dias_es[fecha.weekday()]
+
+        temp_max = round(row['temp_max'], 1)
+        temp_min = round(row['temp_min'], 1)
+
+        # =====================================================================
+        # PREDICCIÓN KNN PARA LA SEMANA
+        # Reemplaza también este bloque con la llamada a tu modelo.
+        # =====================================================================
+        if temp_max >= 25:
+            level = 0
+        elif temp_max >= 20:
+            level = 1
+        elif temp_max >= 15:
+            level = 2
+        else:
+            level = 3
+        # =====================================================================
+
+        rain_prob = row.get('precipitation_probability', 0)
+        rain_mm = row.get('precipitation', 0)
+        
+        if pd.isna(rain_prob): rain_prob = 0
+        if pd.isna(rain_mm): rain_mm = 0
 
         weekly_data.append({
             "dia": nombre_dia,
             "fecha": fecha.strftime("%d/%m"),
-            "temp_max": round(row['temp_max']),
-            "temp_min": round(row['temp_min']),
-            "rain_prob": int(rain_prob), 
+            "temp_max": temp_max,
+            "temp_min": temp_min,
+            "rain_prob": int(rain_prob),
             "rain_mm": round(rain_mm, 1),
             "level": level,
-            "level_text": settings.CLOTHING_LEVELS.get(level, f"Nivel {level}")
+            "level_text": CLOTHING_LEVELS.get(level, f"Nivel {level}")
         })
 
     return weekly_data
