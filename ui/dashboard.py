@@ -29,14 +29,21 @@ def render_wear_card(rec, target_row, ref_row):
     if rec['level'] == 1: color_acc = "#ffeb3b" 
     if rec['level'] == 2: color_acc = "#ff9800" 
 
-    rain_prob = target_row['precipitation_probability'] if 'precipitation_probability' in target_row else 0
-    rain_mm = target_row['precipitation'] if 'precipitation' in target_row else 0
-    
-    if rain_prob > 0 or rain_mm > 0:
-        rain_text = f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)"
-    else:
-        rain_text = "☀️ Sin lluvia"
+    # Lluvia para el PRONÓSTICO (Target)
+    t_rain_prob = target_row.get('precipitation_probability', 0)
+    t_rain_mm = target_row.get('precipitation', 0)
+    if not (t_rain_prob > 0): t_rain_prob = 0
+    if not (t_rain_mm > 0): t_rain_mm = 0
+    t_rain_text = f"☔ {int(t_rain_prob)}% ({round(t_rain_mm, 1)} mm)" if t_rain_prob > 0 or t_rain_mm > 0 else "☀️ Sin lluvia"
 
+    # Lluvia para la REFERENCIA
+    r_rain_prob = ref_row.get('precipitation_probability', 0)
+    r_rain_mm = ref_row.get('precipitation', 0)
+    if not (r_rain_prob > 0): r_rain_prob = 0
+    if not (r_rain_mm > 0): r_rain_mm = 0
+    r_rain_text = f"☔ {int(r_rain_prob)}% ({round(r_rain_mm, 1)} mm)" if r_rain_prob > 0 or r_rain_mm > 0 else "☀️ Sin lluvia"
+
+    # HTML con Referencia a la IZQUIERDA y Pronóstico a la DERECHA
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
@@ -62,13 +69,14 @@ def render_wear_card(rec, target_row, ref_row):
 <div class="wear-desc">{rec['level_text']}</div>
 <div class="wear-metrics">
 <div class="metric-block" style="border-right: 1px solid #444;">
-<p class="metric-title">Pronóstico ({t_obj})</p>
-<p class="metric-value">🌡️ {rec['temp_max']}° / {rec['temp_min']}°</p>
-<p class="metric-rain">{rain_text}</p>
-</div>
-<div class="metric-block">
 <p class="metric-title">Referencia ({t_ref})</p>
 <p class="metric-value">🌡️ {ref_row['temp_max']}° / {ref_row['temp_min']}°</p>
+<p class="metric-rain">{r_rain_text}</p>
+</div>
+<div class="metric-block">
+<p class="metric-title">Pronóstico ({t_obj})</p>
+<p class="metric-value">🌡️ {target_row['temp_max']}° / {target_row['temp_min']}°</p>
+<p class="metric-rain">{t_rain_text}</p>
 </div>
 </div>
 </div>
@@ -169,9 +177,21 @@ def render_dashboard():
     weekly_forecast = get_weekly_recommendations(weather_df)
     
     html_cards = ""
-    for day in weekly_forecast:
-        if day['rain_prob'] > 0 or day['rain_mm'] > 0:
-            rain_text = f"☔ {day['rain_prob']}% ({day['rain_mm']} mm)"
+    for i, day in enumerate(weekly_forecast):
+        # Tomamos la lluvia directo del DataFrame para evitar el bug de inference.py
+        try:
+            df_row = weather_df.iloc[i + 1] # i=0 es Hoy (índice 1)
+            rain_prob = df_row.get('precipitation_probability', 0)
+            rain_mm = df_row.get('precipitation', 0)
+        except Exception:
+            rain_prob = 0
+            rain_mm = 0
+            
+        if not (rain_prob > 0): rain_prob = 0
+        if not (rain_mm > 0): rain_mm = 0
+
+        if rain_prob > 0 or rain_mm > 0:
+            rain_text = f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)"
         else:
             rain_text = "☀️ Sin lluvia"
             
@@ -190,7 +210,7 @@ def render_dashboard():
             </div>
             <div style="flex: 1.8; text-align: center;">
                 🌡️ {day['temp_max']}° / {day['temp_min']}°<br>
-                <span style="font-size: 12px; color: #aaa;">{rain_text}</span>
+                <span style="font-size: 12px; color: #4fc3f7;">{rain_text}</span>
             </div>
             <div style="flex: 2; text-align: right;">
                 🧣 <strong>Nivel {day['level']}</strong><br>
