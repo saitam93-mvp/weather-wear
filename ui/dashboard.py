@@ -16,7 +16,6 @@ def geocode_city(city_name):
     except Exception: return []
 
 def format_precipitation(row):
-    """Función auxiliar para formatear lluvia o nieve con inferencia térmica"""
     snow = row.get('snowfall', 0)
     rain_prob = row.get('precipitation_probability', 0)
     rain_mm = row.get('precipitation', 0)
@@ -26,11 +25,9 @@ def format_precipitation(row):
     if pd.isna(rain_prob): rain_prob = 0
     if pd.isna(rain_mm): rain_mm = 0
     
-    # REGLA TÉRMICA: Si dice que llueve pero hace frío extremo (<= 3°C), inferimos nieve/hielo
     is_snowing = snow > 0 or (rain_mm > 0 and temp_max <= 3)
     
     if is_snowing:
-        # Si la API no dio los cm de nieve, estimamos 1mm de agua = 1cm de nieve
         display_snow = snow if snow > 0 else rain_mm
         return f"❄️ {int(rain_prob)}% ({round(display_snow, 1)} cm)", "<br><span style='color: #81d4fa; font-size: 11px; font-weight: bold;'>+ ❄️ Nieve</span>"
     elif rain_prob > 0 or rain_mm > 0:
@@ -43,16 +40,14 @@ def render_wear_card(rec, target_row, ref_row):
     t_obj = "Mañana" if es_modo_manana else "Hoy"
     t_ref = "Hoy" if es_modo_manana else "Ayer"
 
-    # --- NUEVA ESCALA TÉRMICA DE COLORES ---
     if rec['level'] == 0:
-        color_acc = "#ff4b4b" # Rojo (Calor / Shorts)
+        color_acc = "#ff4b4b" 
     elif rec['level'] == 1:
-        color_acc = "#ffeb3b" # Amarillo (Agradable / Ligero)
+        color_acc = "#ffeb3b" 
     elif rec['level'] == 2:
-        color_acc = "#03a9f4" # Celeste (Fresco / Polerón)
+        color_acc = "#03a9f4" 
     else:
-        color_acc = "#1e88e5" # Azul gélido (Frío / Abrigo / Nieve)
-    # ---------------------------------------
+        color_acc = "#1e88e5" 
 
     t_precip_text, _ = format_precipitation(target_row)
     r_precip_text, _ = format_precipitation(ref_row)
@@ -135,9 +130,13 @@ def render_dashboard():
         if loc.get("source") == "manual":
             if st.button("🛰️ Volver a mi ubicación automática"):
                 del st.session_state["manual_loc"]
+                # Limpiamos el buscador al volver a automático
+                if "city_search" in st.session_state:
+                    st.session_state["city_search"] = ""
                 st.rerun()
                 
-        search_query = st.text_input("Escribe una ciudad:")
+        # Le asignamos la llave (key) a la caja de texto
+        search_query = st.text_input("Escribe una ciudad:", key="city_search")
         if search_query:
             with st.spinner("Buscando en el mapa..."):
                 results = geocode_city(search_query)
@@ -149,6 +148,8 @@ def render_dashboard():
                                 "lat": r["latitude"], "lon": r["longitude"],
                                 "source": "manual", "name": r["name"]
                             }
+                            # Magia aquí: vaciamos el buscador al hacer clic
+                            st.session_state["city_search"] = ""
                             st.rerun() 
                 else:
                     st.warning("No encontramos esa ciudad.")
