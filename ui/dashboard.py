@@ -7,19 +7,27 @@ from logic.inference import get_recommendation, get_weekly_recommendations
 from ui.feedback import render_feedback_section
 from services.location import get_current_coords
 
-# --- FUNCIONES AUXILIARES ---
-
 def geocode_city(city_name):
-    """Busca las coordenadas de una ciudad usando la API gratuita de Open-Meteo."""
     try:
         url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=5&language=es&format=json"
         res = requests.get(url).json()
         return res.get("results", [])
-    except Exception:
-        return []
+    except Exception: return []
+
+def format_precipitation(row):
+    """Función auxiliar para formatear lluvia o nieve en los textos"""
+    snow = row.get('snowfall', 0)
+    rain_prob = row.get('precipitation_probability', 0)
+    rain_mm = row.get('precipitation', 0)
+    
+    if snow > 0:
+        return f"❄️ Nieve ({round(snow, 1)} cm)", "<br><span style='color: #81d4fa; font-size: 11px; font-weight: bold;'>+ ❄️ Nieve</span>"
+    elif rain_prob > 0 or rain_mm > 0:
+        return f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)", "<br><span style='color: #ffeb3b; font-size: 11px; font-weight: bold;'>+ ☔ Impermeable</span>"
+    else:
+        return "☀️ Sin lluvia", ""
 
 def render_wear_card(rec, target_row, ref_row):
-    """Genera una tarjeta HTML/CSS rica para la recomendación principal."""
     es_modo_manana = "mañana" in rec['mode'].lower()
     t_obj = "Mañana" if es_modo_manana else "Hoy"
     t_ref = "Hoy" if es_modo_manana else "Ayer"
@@ -29,17 +37,8 @@ def render_wear_card(rec, target_row, ref_row):
     if rec['level'] == 1: color_acc = "#ffeb3b" 
     if rec['level'] == 2: color_acc = "#ff9800" 
 
-    t_rain_prob = target_row.get('precipitation_probability', 0)
-    t_rain_mm = target_row.get('precipitation', 0)
-    if not (t_rain_prob > 0): t_rain_prob = 0
-    if not (t_rain_mm > 0): t_rain_mm = 0
-    t_rain_text = f"☔ {int(t_rain_prob)}% ({round(t_rain_mm, 1)} mm)" if t_rain_prob > 0 or t_rain_mm > 0 else "☀️ Sin lluvia"
-
-    r_rain_prob = ref_row.get('precipitation_probability', 0)
-    r_rain_mm = ref_row.get('precipitation', 0)
-    if not (r_rain_prob > 0): r_rain_prob = 0
-    if not (r_rain_mm > 0): r_rain_mm = 0
-    r_rain_text = f"☔ {int(r_rain_prob)}% ({round(r_rain_mm, 1)} mm)" if r_rain_prob > 0 or r_rain_mm > 0 else "☀️ Sin lluvia"
+    t_precip_text, _ = format_precipitation(target_row)
+    r_precip_text, _ = format_precipitation(ref_row)
 
     html = f"""
 <style>
@@ -53,7 +52,7 @@ def render_wear_card(rec, target_row, ref_row):
 .metric-block {{ flex: 1; text-align: center; }}
 .metric-title {{ color: #ccc; font-size: 12px; margin-bottom: 5px; }}
 .metric-value {{ font-size: 20px; font-weight: bold; margin-bottom: 5px; }}
-.metric-rain {{ font-size: 14px; color: #4fc3f7; margin: 0; }}
+.metric-rain {{ font-size: 14px; color: #b3e5fc; margin: 0; }}
 </style>
 <div class="wear-card">
 <div class="wear-header">
@@ -68,19 +67,17 @@ def render_wear_card(rec, target_row, ref_row):
 <div class="metric-block" style="border-right: 1px solid #444;">
 <p class="metric-title">Referencia ({t_ref})</p>
 <p class="metric-value">🌡️ {ref_row['temp_max']}° / {ref_row['temp_min']}°</p>
-<p class="metric-rain">{r_rain_text}</p>
+<p class="metric-rain">{r_precip_text}</p>
 </div>
 <div class="metric-block">
 <p class="metric-title">Pronóstico ({t_obj})</p>
 <p class="metric-value">🌡️ {target_row['temp_max']}° / {target_row['temp_min']}°</p>
-<p class="metric-rain">{t_rain_text}</p>
+<p class="metric-rain">{t_precip_text}</p>
 </div>
 </div>
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
-
-# --- FUNCIÓN PRINCIPAL DEL DASHBOARD ---
 
 def render_dashboard():
     zona_stgo = ZoneInfo("America/Santiago")
@@ -123,7 +120,7 @@ def render_dashboard():
                 del st.session_state["manual_loc"]
                 st.rerun()
                 
-        search_query = st.text_input("Escribe una ciudad (ej. Puerto Montt):")
+        search_query = st.text_input("Escribe una ciudad:")
         if search_query:
             with st.spinner("Buscando en el mapa..."):
                 results = geocode_city(search_query)
@@ -132,24 +129,21 @@ def render_dashboard():
                         city_text = f"{r['name']}, {r.get('admin1', '')}, {r.get('country', '')}".strip(", ")
                         if st.button(f"📍 {city_text}", key=r['id']):
                             st.session_state["manual_loc"] = {
-                                "lat": r["latitude"],
-                                "lon": r["longitude"],
-                                "source": "manual",
-                                "name": r["name"]
+                                "lat": r["latitude"], "lon": r["longitude"],
+                                "source": "manual", "name": r["name"]
                             }
                             st.rerun() 
                 else:
-                    st.warning("No encontramos esa ciudad. Intenta con otro nombre.")
+                    st.warning("No encontramos esa ciudad.")
 
     with st.spinner("Consultando satélites..."):
         weather_df = get_weather_forecast()
     
     if weather_df.empty:
-        st.error("No pudimos conectar con el servicio de clima. Revisa tu conexión.")
+        st.error("No pudimos conectar con el servicio de clima.")
         return
 
     rec = get_recommendation(weather_df)
-    
     if not rec:
         st.error("Error calculando la recomendación.")
         return
@@ -157,7 +151,6 @@ def render_dashboard():
     es_modo_manana = "mañana" in rec['mode'].lower()
     target_idx = 2 if es_modo_manana else 1
     ref_idx = 1 if es_modo_manana else 0
-    
     target_row = weather_df.iloc[target_idx]
     ref_row = weather_df.iloc[ref_idx] 
     
@@ -175,25 +168,11 @@ def render_dashboard():
     
     html_cards = ""
     for i, day in enumerate(weekly_forecast):
-        try:
-            df_row = weather_df.iloc[i + 1] 
-            rain_prob = df_row.get('precipitation_probability', 0)
-            rain_mm = df_row.get('precipitation', 0)
-        except Exception:
-            rain_prob = 0
-            rain_mm = 0
+        try: df_row = weather_df.iloc[i + 1] 
+        except: df_row = {}
             
-        if not (rain_prob > 0): rain_prob = 0
-        if not (rain_mm > 0): rain_mm = 0
-
-        # Lógica para mostrar la etiqueta de impermeable
-        if rain_prob > 0 or rain_mm > 0:
-            rain_text = f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)"
-            rain_alert_html = "<br><span style='color: #ffeb3b; font-size: 11px; font-weight: bold;'>+ ☔ Impermeable</span>"
-        else:
-            rain_text = "☀️ Sin lluvia"
-            rain_alert_html = ""
-            
+        precip_text, precip_alert = format_precipitation(df_row)
+        
         if ':' in day['level_text'] and '(' in day['level_text']:
             level_desc = day['level_text'].split(':')[1].split('(')[0].strip()
         else:
@@ -209,11 +188,11 @@ def render_dashboard():
             </div>
             <div style="flex: 1.8; text-align: center;">
                 🌡️ {day['temp_max']}° / {day['temp_min']}°<br>
-                <span style="font-size: 12px; color: #4fc3f7;">{rain_text}</span>
+                <span style="font-size: 12px; color: #b3e5fc;">{precip_text}</span>
             </div>
             <div style="flex: 2; text-align: right; line-height: 1.4;">
                 🧣 <strong>Nivel {day['level']}</strong><br>
-                <span style="font-size: 11px; color: #ccc;">{level_desc}</span>{rain_alert_html}
+                <span style="font-size: 11px; color: #ccc;">{level_desc}</span>{precip_alert}
             </div>
         </div>
         """
