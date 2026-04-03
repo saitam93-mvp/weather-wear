@@ -18,7 +18,7 @@ def geocode_city(city_name):
     except Exception:
         return []
 
-def render_wear_card(rec, ref_data):
+def render_wear_card(rec, target_row, ref_row):
     """Genera una tarjeta HTML/CSS rica para la recomendación principal."""
     es_modo_manana = "mañana" in rec['mode'].lower()
     t_obj = "Mañana" if es_modo_manana else "Hoy"
@@ -29,43 +29,50 @@ def render_wear_card(rec, ref_data):
     if rec['level'] == 1: color_acc = "#ffeb3b" 
     if rec['level'] == 2: color_acc = "#ff9800" 
 
+    # Extracción de lluvia del DataFrame
+    rain_prob = target_row['precipitation_probability'] if 'precipitation_probability' in target_row else 0
+    rain_mm = target_row['precipitation'] if 'precipitation' in target_row else 0
+    rain_text = f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)" if rain_prob > 0 or rain_mm > 0 else "☀️ Sin lluvia"
+
     # CERO espacios a la izquierda de cada línea. Esto evita el bug de Streamlit.
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
 .wear-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }}
-.wear-mode {{ color: #888; font-size: 14px; text-transform: uppercase; font-weight: bold; }}
+.wear-mode {{ color: #888; font-size: 14px; text-transform: uppercase; font-weight: bold; margin-bottom: 5px; }}
 .wear-title {{ font-size: 32px; font-weight: 800; margin: 0; }}
-.wear-delta {{ font-size: 14px; color: #aaa; margin-top: -5px; }}
+.wear-delta {{ font-size: 14px; color: #aaa; margin-top: 5px; }}
 .wear-desc {{ font-size: 18px; color: white; font-weight: bold; margin-bottom: 15px; }}
 .wear-metrics {{ display: flex; justify-content: space-between; background-color: #1a1b21; padding: 15px; border-radius: 10px; }}
 .metric-block {{ flex: 1; text-align: center; }}
 .metric-title {{ color: #ccc; font-size: 12px; margin-bottom: 5px; }}
-.metric-value {{ font-size: 20px; font-weight: bold; }}
+.metric-value {{ font-size: 20px; font-weight: bold; margin-bottom: 5px; }}
+.metric-rain {{ font-size: 14px; color: #4fc3f7; margin: 0; }}
 </style>
 <div class="wear-card">
 <div class="wear-header">
 <div>
 <p class="wear-mode">MODO {rec['mode'].upper()}</p>
-<h1 class="wear-title">🧣 Nivel {rec['level']}</h1>
+<h1 class="wear-title">Nivel {rec['level']}</h1>
 <p class="wear-delta">{rec['context']}</p>
 </div>
-<div style="font-size: 50px;">🧣</div>
 </div>
 <div class="wear-desc">{rec['level_text']}</div>
 <div class="wear-metrics">
 <div class="metric-block" style="border-right: 1px solid #444;">
 <p class="metric-title">Pronóstico ({t_obj})</p>
 <p class="metric-value">🌡️ {rec['temp_max']}° / {rec['temp_min']}°</p>
+<p class="metric-rain">{rain_text}</p>
 </div>
 <div class="metric-block">
 <p class="metric-title">Referencia ({t_ref})</p>
-<p class="metric-value">🌡️ {ref_data['temp_max']}° / {ref_data['temp_min']}°</p>
+<p class="metric-value">🌡️ {ref_row['temp_max']}° / {ref_row['temp_min']}°</p>
 </div>
 </div>
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
+
 # --- FUNCIÓN PRINCIPAL DEL DASHBOARD ---
 
 def render_dashboard():
@@ -88,13 +95,8 @@ def render_dashboard():
         st.markdown("<p style='text-align: center; opacity: 0.8; color: white;'>Hoy la app se viste de gala. Que tengas un día hermoso, te amo muchísimo.</p>", unsafe_allow_html=True)
         st.divider()
     else:
-        col1, col2 = st.columns([6, 1])
-        with col1:
-            st.title("IsiWear")
-        with col2:
-            st.write("") 
-            st.write("")
-            st.write("🧣") 
+        # Título limpio sin columnas ni emojis extra
+        st.title("IsiWear")
 
     # --- 1. INDICADOR Y SELECTOR DE UBICACIÓN ---
     loc = get_current_coords()
@@ -152,8 +154,15 @@ def render_dashboard():
 
     # --- 4 & 5. UI: TARJETA DE RECOMENDACIÓN PRINCIPAL ---
     es_modo_manana = "mañana" in rec['mode'].lower()
-    ref_row = weather_df.iloc[1] if es_modo_manana else weather_df.iloc[0] 
-    render_wear_card(rec, ref_row)
+    
+    # Índice 0 = Ayer, 1 = Hoy, 2 = Mañana
+    target_idx = 2 if es_modo_manana else 1
+    ref_idx = 1 if es_modo_manana else 0
+    
+    target_row = weather_df.iloc[target_idx]
+    ref_row = weather_df.iloc[ref_idx] 
+    
+    render_wear_card(rec, target_row, ref_row)
 
     # --- 6. UI: Razón de la decisión ---
     if "Alerta" in rec['reasoning']:
