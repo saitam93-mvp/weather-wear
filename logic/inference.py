@@ -45,7 +45,7 @@ def get_recommendation(weather_df):
     elif delta_temp > 2: context = f"{abs(delta_temp):.1f}°C más cálido que {'hoy' if mode == 'Mañana' else 'ayer'}"
     else: context = f"{abs(delta_temp):.1f}°C más frío que {'hoy' if mode == 'Mañana' else 'ayer'}"
 
-    # Lógica de precipitación
+    # Lógica de precipitación y nieve (con inferencia térmica)
     rain_prob = target_row.get('precipitation_probability', 0)
     rain_mm = target_row.get('precipitation', 0)
     snow_cm = target_row.get('snowfall', 0)
@@ -56,9 +56,12 @@ def get_recommendation(weather_df):
 
     reasoning = "Según tu historial de preferencias."
     
-    # Priorizamos la nieve sobre la lluvia para la alerta visual
-    if snow_cm > 0:
-        reasoning = f"❄️ Alerta de nieve ({round(snow_cm, 1)} cm). ¡Abrígate bien y procura usar calzado adecuado!"
+    # Inferencia térmica: si llueve pero hace menos de 3 grados máximo, es nieve/hielo
+    is_snowing = snow_cm > 0 or (rain_mm > 0 and temp_max <= 3)
+    
+    if is_snowing:
+        display_snow = snow_cm if snow_cm > 0 else rain_mm
+        reasoning = f"❄️ Alerta de nieve/hielo ({int(rain_prob)}% / {round(display_snow, 1)} cm est.). ¡Abrígate muy bien y usa calzado antideslizante!"
     elif rain_prob > 0 or rain_mm > 0:
         reasoning = f"⚠️ Alerta de lluvia ({int(rain_prob)}% / {round(rain_mm, 1)} mm). Mantén el nivel de ropa recomendado, pero suma un impermeable."
 

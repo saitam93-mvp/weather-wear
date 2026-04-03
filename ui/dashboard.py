@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from services.weather_api import get_weather_forecast
@@ -15,17 +16,27 @@ def geocode_city(city_name):
     except Exception: return []
 
 def format_precipitation(row):
-    """Función auxiliar para formatear lluvia o nieve en los textos"""
+    """Función auxiliar para formatear lluvia o nieve con inferencia térmica"""
     snow = row.get('snowfall', 0)
     rain_prob = row.get('precipitation_probability', 0)
     rain_mm = row.get('precipitation', 0)
+    temp_max = row.get('temp_max', 20)
     
-    if snow > 0:
-        return f"❄️ Nieve ({round(snow, 1)} cm)", "<br><span style='color: #81d4fa; font-size: 11px; font-weight: bold;'>+ ❄️ Nieve</span>"
+    if pd.isna(snow): snow = 0
+    if pd.isna(rain_prob): rain_prob = 0
+    if pd.isna(rain_mm): rain_mm = 0
+    
+    # REGLA TÉRMICA: Si dice que llueve pero hace frío extremo (<= 3°C), inferimos nieve/hielo
+    is_snowing = snow > 0 or (rain_mm > 0 and temp_max <= 3)
+    
+    if is_snowing:
+        # Si la API no dio los cm de nieve, estimamos 1mm de agua = 1cm de nieve
+        display_snow = snow if snow > 0 else rain_mm
+        return f"❄️ {int(rain_prob)}% ({round(display_snow, 1)} cm)", "<br><span style='color: #81d4fa; font-size: 11px; font-weight: bold;'>+ ❄️ Nieve</span>"
     elif rain_prob > 0 or rain_mm > 0:
         return f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)", "<br><span style='color: #ffeb3b; font-size: 11px; font-weight: bold;'>+ ☔ Impermeable</span>"
     else:
-        return "☀️ Sin lluvia", ""
+        return "☀️ Sin precipitación", ""
 
 def render_wear_card(rec, target_row, ref_row):
     es_modo_manana = "mañana" in rec['mode'].lower()
