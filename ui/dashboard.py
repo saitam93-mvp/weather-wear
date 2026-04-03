@@ -24,13 +24,12 @@ def render_wear_card(rec, ref_data):
     t_obj = "Mañana" if es_modo_manana else "Hoy"
     t_ref = "Hoy" if es_modo_manana else "Ayer"
 
-    # Determinar un color de acento según el nivel
-    color_acc = "#ff4b4b" # Rojo por defecto
-    if rec['level'] == 0: color_acc = "#4caf50" # Verde
-    if rec['level'] == 1: color_acc = "#ffeb3b" # Amarillo
-    if rec['level'] == 2: color_acc = "#ff9800" # Naranja
+    color_acc = "#ff4b4b" 
+    if rec['level'] == 0: color_acc = "#4caf50" 
+    if rec['level'] == 1: color_acc = "#ffeb3b" 
+    if rec['level'] == 2: color_acc = "#ff9800" 
 
-    # IMPORTANTE: Este HTML no debe tener espacios a la izquierda para evitar que Streamlit lo lea como código
+    # CERO espacios a la izquierda de cada línea. Esto evita el bug de Streamlit.
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
@@ -45,30 +44,28 @@ def render_wear_card(rec, ref_data):
 .metric-value {{ font-size: 20px; font-weight: bold; }}
 </style>
 <div class="wear-card">
-    <div class="wear-header">
-        <div>
-            <p class="wear-mode">MODO {rec['mode'].upper()}</p>
-            <h1 class="wear-title">🧣 Nivel {rec['level']}</h1>
-            <p class="wear-delta">{rec['context']}</p>
-        </div>
-        <div style="font-size: 50px;">🧣</div>
-    </div>
-    <div class="wear-desc">{rec['level_text']}</div>
-    
-    <div class="wear-metrics">
-        <div class="metric-block" style="border-right: 1px solid #444;">
-            <p class="metric-title">Pronóstico ({t_obj})</p>
-            <p class="metric-value">🌡️ {rec['temp_max']}° / {rec['temp_min']}°</p>
-        </div>
-        <div class="metric-block">
-            <p class="metric-title">Referencia ({t_ref})</p>
-            <p class="metric-value">🌡️ {ref_data['temp_max']}° / {ref_data['temp_min']}°</p>
-        </div>
-    </div>
+<div class="wear-header">
+<div>
+<p class="wear-mode">MODO {rec['mode'].upper()}</p>
+<h1 class="wear-title">🧣 Nivel {rec['level']}</h1>
+<p class="wear-delta">{rec['context']}</p>
+</div>
+<div style="font-size: 50px;">🧣</div>
+</div>
+<div class="wear-desc">{rec['level_text']}</div>
+<div class="wear-metrics">
+<div class="metric-block" style="border-right: 1px solid #444;">
+<p class="metric-title">Pronóstico ({t_obj})</p>
+<p class="metric-value">🌡️ {rec['temp_max']}° / {rec['temp_min']}°</p>
+</div>
+<div class="metric-block">
+<p class="metric-title">Referencia ({t_ref})</p>
+<p class="metric-value">🌡️ {ref_data['temp_max']}° / {ref_data['temp_min']}°</p>
+</div>
+</div>
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
-
 # --- FUNCIÓN PRINCIPAL DEL DASHBOARD ---
 
 def render_dashboard():
