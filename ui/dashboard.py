@@ -7,7 +7,7 @@ from logic.inference import get_recommendation, get_weekly_recommendations
 from ui.feedback import render_feedback_section
 from services.location import get_current_coords
 
-# --- FUNCIONES AUXILIARES DE ESTILO ---
+# --- FUNCIONES AUXILIARES ---
 
 def geocode_city(city_name):
     """Busca las coordenadas de una ciudad usando la API gratuita de Open-Meteo."""
@@ -30,101 +30,74 @@ def render_wear_card(rec, ref_data):
     if rec['level'] == 1: color_acc = "#ffeb3b" # Amarillo
     if rec['level'] == 2: color_acc = "#ff9800" # Naranja
 
+    # IMPORTANTE: Este HTML no debe tener espacios a la izquierda para evitar que Streamlit lo lea como código
     html = f"""
-    <style>
-        .wear-card {{
-            background-color: #262730;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            border-left: 5px solid {color_acc};
-            margin-bottom: 20px;
-        }}
-        .wear-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }}
-        .wear-mode {{
-            color: #888;
-            font-size: 14px;
-            text-transform: uppercase;
-            font-weight: bold;
-        }}
-        .wear-title {{
-            font-size: 32px;
-            font-weight: 800;
-            margin: 0;
-        }}
-        .wear-delta {{
-            font-size: 14px;
-            color: #aaa;
-            margin-top: -5px;
-        }}
-        .wear-desc {{
-            font-size: 18px;
-            color: white;
-            font-weight: bold;
-            margin-bottom: 15px;
-        }}
-        .wear-metrics {{
-            display: flex;
-            justify-content: space-between;
-            background-color: #1a1b21;
-            padding: 15px;
-            border-radius: 10px;
-        }}
-        .metric-block {{
-            flex: 1;
-            text-align: center;
-        }}
-        .metric-title {{
-            color: #ccc;
-            font-size: 12px;
-            margin-bottom: 5px;
-        }}
-        .metric-value {{
-            font-size: 20px;
-            font-weight: bold;
-        }}
-    </style>
-    <div class="wear-card">
-        <div class="wear-header">
-            <div>
-                <p class="wear-mode">MODO {rec['mode'].upper()}</p>
-                <h1 class="wear-title">🧣 Nivel {rec['level']}</h1>
-                <p class="wear-delta">{rec['context']}</p>
-            </div>
-            <div style="font-size: 50px;">🧣</div>
+<style>
+.wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
+.wear-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }}
+.wear-mode {{ color: #888; font-size: 14px; text-transform: uppercase; font-weight: bold; }}
+.wear-title {{ font-size: 32px; font-weight: 800; margin: 0; }}
+.wear-delta {{ font-size: 14px; color: #aaa; margin-top: -5px; }}
+.wear-desc {{ font-size: 18px; color: white; font-weight: bold; margin-bottom: 15px; }}
+.wear-metrics {{ display: flex; justify-content: space-between; background-color: #1a1b21; padding: 15px; border-radius: 10px; }}
+.metric-block {{ flex: 1; text-align: center; }}
+.metric-title {{ color: #ccc; font-size: 12px; margin-bottom: 5px; }}
+.metric-value {{ font-size: 20px; font-weight: bold; }}
+</style>
+<div class="wear-card">
+    <div class="wear-header">
+        <div>
+            <p class="wear-mode">MODO {rec['mode'].upper()}</p>
+            <h1 class="wear-title">🧣 Nivel {rec['level']}</h1>
+            <p class="wear-delta">{rec['context']}</p>
         </div>
-        <div class="wear-desc">{rec['level_text']}</div>
-        
-        <div class="wear-metrics">
-            <div class="metric-block" style="border-right: 1px solid #444;">
-                <p class="metric-title">Pronóstico ({t_obj})</p>
-                <p class="metric-value">🌡️ {rec['temp_max']}° / {rec['temp_min']}°</p>
-            </div>
-            <div class="metric-block">
-                <p class="metric-title">Referencia ({t_ref})</p>
-                <p class="metric-value">🌡️ {ref_data['temp_max']}° / {ref_data['temp_min']}°</p>
-            </div>
+        <div style="font-size: 50px;">🧣</div>
+    </div>
+    <div class="wear-desc">{rec['level_text']}</div>
+    
+    <div class="wear-metrics">
+        <div class="metric-block" style="border-right: 1px solid #444;">
+            <p class="metric-title">Pronóstico ({t_obj})</p>
+            <p class="metric-value">🌡️ {rec['temp_max']}° / {rec['temp_min']}°</p>
+        </div>
+        <div class="metric-block">
+            <p class="metric-title">Referencia ({t_ref})</p>
+            <p class="metric-value">🌡️ {ref_data['temp_max']}° / {ref_data['temp_min']}°</p>
         </div>
     </div>
-    """
+</div>
+"""
     st.markdown(html, unsafe_allow_html=True)
 
 # --- FUNCIÓN PRINCIPAL DEL DASHBOARD ---
 
 def render_dashboard():
-    # Estilo base para el título y logo (image_8.png)
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("IsiWear")
-    with col2:
-        st.write("") # Espaciador
-        st.write("")
-        st.write("🧣") # Emojis no siempre escalan bien, un SVG/IMG es mejor pero esto sirve
+    # --- DETALLE DE ANIVERSARIO ---
+    zona_stgo = ZoneInfo("America/Santiago")
+    hoy = datetime.now(zona_stgo)
+    es_aniversario = hoy.day == 12
+    
+    if es_aniversario:
+        st.markdown("""
+        <style>
+            .stApp { background: linear-gradient(135deg, #300A17 0%, #0F0307 100%) !important; }
+            h1 { text-shadow: 0 0 10px #ff4b4b, 0 0 20px #ff4b4b; }
+        </style>
+        """, unsafe_allow_html=True)
+
+        st.balloons()
+        st.title("IsiWear 💖")
+        st.markdown("<h3 style='text-align: center; color: #ffb3d9;'>¡Feliz día 12, mi amor! 🥰</h3>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; opacity: 0.8; color: white;'>Hoy la app se viste de gala. Que tengas un día hermoso, te amo muchísimo.</p>", unsafe_allow_html=True)
+        st.divider()
+    else:
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            st.title("IsiWear")
+        with col2:
+            st.write("") 
+            st.write("")
+            st.write("🧣") 
 
     # --- 1. INDICADOR Y SELECTOR DE UBICACIÓN ---
     loc = get_current_coords()
@@ -180,8 +153,7 @@ def render_dashboard():
         st.error("Error calculando la recomendación.")
         return
 
-    # --- 4 & 5. UI: TARJETA DE RECOMENDACIÓN PRINCIPAL (NUEVO DISEÑO HTML) ---
-    # Obtenemos los datos de referencia correctos
+    # --- 4 & 5. UI: TARJETA DE RECOMENDACIÓN PRINCIPAL ---
     es_modo_manana = "mañana" in rec['mode'].lower()
     ref_row = weather_df.iloc[1] if es_modo_manana else weather_df.iloc[0] 
     render_wear_card(rec, ref_row)
@@ -192,13 +164,12 @@ def render_dashboard():
     else:
         st.caption(f"💡 Razón: {rec['reasoning']}")
 
-    # --- 7. UI: PRONÓSTICO SEMANAL (NUEVO DISEÑO DE TARJETAS HORIZONTALES) ---
+    # --- 7. UI: PRONÓSTICO SEMANAL ---
     st.divider()
     st.subheader("📅 Próximos 7 días")
     
     weekly_forecast = get_weekly_recommendations(weather_df)
     
-    # Construimos una lista de tarjetas compactas usando HTML/CSS para forzar la vista horizontal en móviles.
     html_cards = ""
     for day in weekly_forecast:
         if day['rain_prob'] > 0 or day['rain_mm'] > 0:
@@ -206,6 +177,11 @@ def render_dashboard():
         else:
             rain_text = "☀️ Sin lluvia"
             
+        if ':' in day['level_text'] and '(' in day['level_text']:
+            level_desc = day['level_text'].split(':')[1].split('(')[0].strip()
+        else:
+            level_desc = day['level_text']
+
         html_cards += f"""
         <div style="display: flex; justify-content: space-between; align-items: center; 
                     background-color: #262730; padding: 15px; border-radius: 10px; margin-bottom: 10px;
@@ -220,7 +196,8 @@ def render_dashboard():
             </div>
             <div style="flex: 2; text-align: right;">
                 🧣 <strong>Nivel {day['level']}</strong><br>
-                <span style="font-size: 11px; color: #ccc;">{day['level_text'].split(' (')[0]}</span> </div>
+                <span style="font-size: 11px; color: #ccc;">{level_desc}</span>
+            </div>
         </div>
         """
         
