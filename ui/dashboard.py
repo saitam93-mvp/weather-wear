@@ -43,10 +43,16 @@ def render_wear_card(rec, target_row, ref_row):
     t_obj = "Mañana" if es_modo_manana else "Hoy"
     t_ref = "Hoy" if es_modo_manana else "Ayer"
 
-    color_acc = "#ff4b4b" 
-    if rec['level'] == 0: color_acc = "#4caf50" 
-    if rec['level'] == 1: color_acc = "#ffeb3b" 
-    if rec['level'] == 2: color_acc = "#ff9800" 
+    # --- NUEVA ESCALA TÉRMICA DE COLORES ---
+    if rec['level'] == 0:
+        color_acc = "#ff4b4b" # Rojo (Calor / Shorts)
+    elif rec['level'] == 1:
+        color_acc = "#ffeb3b" # Amarillo (Agradable / Ligero)
+    elif rec['level'] == 2:
+        color_acc = "#03a9f4" # Celeste (Fresco / Polerón)
+    else:
+        color_acc = "#1e88e5" # Azul gélido (Frío / Abrigo / Nieve)
+    # ---------------------------------------
 
     t_precip_text, _ = format_precipitation(target_row)
     r_precip_text, _ = format_precipitation(ref_row)
