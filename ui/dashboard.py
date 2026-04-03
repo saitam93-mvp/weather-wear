@@ -91,6 +91,26 @@ def render_wear_card(rec, target_row, ref_row):
 """
     st.markdown(html, unsafe_allow_html=True)
 
+
+# --- CALLBACKS PARA EL MANEJO DE ESTADO DEL BUSCADOR ---
+
+def set_manual_location(r):
+    """Callback: Guarda la nueva ubicación y limpia la caja de texto antes de recargar."""
+    st.session_state["manual_loc"] = {
+        "lat": r["latitude"], "lon": r["longitude"],
+        "source": "manual", "name": r["name"]
+    }
+    st.session_state["city_search"] = ""
+
+def reset_to_auto_location():
+    """Callback: Borra la ubicación manual y limpia la caja de texto antes de recargar."""
+    if "manual_loc" in st.session_state:
+        del st.session_state["manual_loc"]
+    st.session_state["city_search"] = ""
+
+
+# --- FUNCIÓN PRINCIPAL DEL DASHBOARD ---
+
 def render_dashboard():
     zona_stgo = ZoneInfo("America/Santiago")
     hoy = datetime.now(zona_stgo)
@@ -128,14 +148,9 @@ def render_dashboard():
 
     with st.expander("🔎 Cambiar de ciudad", expanded=False):
         if loc.get("source") == "manual":
-            if st.button("🛰️ Volver a mi ubicación automática"):
-                del st.session_state["manual_loc"]
-                # Limpiamos el buscador al volver a automático
-                if "city_search" in st.session_state:
-                    st.session_state["city_search"] = ""
-                st.rerun()
+            # Conectamos el botón al callback
+            st.button("🛰️ Volver a mi ubicación automática", on_click=reset_to_auto_location)
                 
-        # Le asignamos la llave (key) a la caja de texto
         search_query = st.text_input("Escribe una ciudad:", key="city_search")
         if search_query:
             with st.spinner("Buscando en el mapa..."):
@@ -143,14 +158,8 @@ def render_dashboard():
                 if results:
                     for r in results:
                         city_text = f"{r['name']}, {r.get('admin1', '')}, {r.get('country', '')}".strip(", ")
-                        if st.button(f"📍 {city_text}", key=r['id']):
-                            st.session_state["manual_loc"] = {
-                                "lat": r["latitude"], "lon": r["longitude"],
-                                "source": "manual", "name": r["name"]
-                            }
-                            # Magia aquí: vaciamos el buscador al hacer clic
-                            st.session_state["city_search"] = ""
-                            st.rerun() 
+                        # Conectamos el botón de la ciudad elegida al callback, pasándole los datos de la ciudad (r)
+                        st.button(f"📍 {city_text}", key=r['id'], on_click=set_manual_location, args=(r,))
                 else:
                     st.warning("No encontramos esa ciudad.")
 
