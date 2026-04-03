@@ -29,21 +29,18 @@ def render_wear_card(rec, target_row, ref_row):
     if rec['level'] == 1: color_acc = "#ffeb3b" 
     if rec['level'] == 2: color_acc = "#ff9800" 
 
-    # Lluvia para el PRONÓSTICO (Target)
     t_rain_prob = target_row.get('precipitation_probability', 0)
     t_rain_mm = target_row.get('precipitation', 0)
     if not (t_rain_prob > 0): t_rain_prob = 0
     if not (t_rain_mm > 0): t_rain_mm = 0
     t_rain_text = f"☔ {int(t_rain_prob)}% ({round(t_rain_mm, 1)} mm)" if t_rain_prob > 0 or t_rain_mm > 0 else "☀️ Sin lluvia"
 
-    # Lluvia para la REFERENCIA
     r_rain_prob = ref_row.get('precipitation_probability', 0)
     r_rain_mm = ref_row.get('precipitation', 0)
     if not (r_rain_prob > 0): r_rain_prob = 0
     if not (r_rain_mm > 0): r_rain_mm = 0
     r_rain_text = f"☔ {int(r_rain_prob)}% ({round(r_rain_mm, 1)} mm)" if r_rain_prob > 0 or r_rain_mm > 0 else "☀️ Sin lluvia"
 
-    # HTML con Referencia a la IZQUIERDA y Pronóstico a la DERECHA
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
@@ -178,9 +175,8 @@ def render_dashboard():
     
     html_cards = ""
     for i, day in enumerate(weekly_forecast):
-        # Tomamos la lluvia directo del DataFrame para evitar el bug de inference.py
         try:
-            df_row = weather_df.iloc[i + 1] # i=0 es Hoy (índice 1)
+            df_row = weather_df.iloc[i + 1] 
             rain_prob = df_row.get('precipitation_probability', 0)
             rain_mm = df_row.get('precipitation', 0)
         except Exception:
@@ -190,10 +186,13 @@ def render_dashboard():
         if not (rain_prob > 0): rain_prob = 0
         if not (rain_mm > 0): rain_mm = 0
 
+        # Lógica para mostrar la etiqueta de impermeable
         if rain_prob > 0 or rain_mm > 0:
             rain_text = f"☔ {int(rain_prob)}% ({round(rain_mm, 1)} mm)"
+            rain_alert_html = "<br><span style='color: #ffeb3b; font-size: 11px; font-weight: bold;'>+ ☔ Impermeable</span>"
         else:
             rain_text = "☀️ Sin lluvia"
+            rain_alert_html = ""
             
         if ':' in day['level_text'] and '(' in day['level_text']:
             level_desc = day['level_text'].split(':')[1].split('(')[0].strip()
@@ -212,9 +211,9 @@ def render_dashboard():
                 🌡️ {day['temp_max']}° / {day['temp_min']}°<br>
                 <span style="font-size: 12px; color: #4fc3f7;">{rain_text}</span>
             </div>
-            <div style="flex: 2; text-align: right;">
+            <div style="flex: 2; text-align: right; line-height: 1.4;">
                 🧣 <strong>Nivel {day['level']}</strong><br>
-                <span style="font-size: 11px; color: #ccc;">{level_desc}</span>
+                <span style="font-size: 11px; color: #ccc;">{level_desc}</span>{rain_alert_html}
             </div>
         </div>
         """
