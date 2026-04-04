@@ -3,10 +3,15 @@ import requests
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import streamlit.components.v1 as components
+
 from services.weather_api import get_weather_forecast
 from logic.inference import get_recommendation, get_weekly_recommendations 
 from ui.feedback import render_feedback_section
 from services.location import get_current_coords
+
+
+# --- FUNCIONES AUXILIARES ---
 
 def geocode_city(city_name):
     try:
@@ -40,6 +45,7 @@ def render_wear_card(rec, target_row, ref_row):
     t_obj = "Mañana" if es_modo_manana else "Hoy"
     t_ref = "Hoy" if es_modo_manana else "Ayer"
 
+    # Escala Térmica de Colores
     if rec['level'] == 0:
         color_acc = "#ff4b4b" 
     elif rec['level'] == 1:
@@ -52,6 +58,7 @@ def render_wear_card(rec, target_row, ref_row):
     t_precip_text, _ = format_precipitation(target_row)
     r_precip_text, _ = format_precipitation(ref_row)
 
+    # CERO espacios a la izquierda en el HTML para evitar que Streamlit lo procese como código
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
@@ -112,6 +119,26 @@ def reset_to_auto_location():
 # --- FUNCIÓN PRINCIPAL DEL DASHBOARD ---
 
 def render_dashboard():
+    # --- INYECCIÓN PWA ---
+    pwa_code = """
+    <script>
+        const parent = window.parent.document;
+        if (!parent.querySelector('link[rel="manifest"]')) {
+            const manifest = parent.createElement('link');
+            manifest.rel = 'manifest';
+            manifest.href = 'app/static/manifest.json';
+            parent.head.appendChild(manifest);
+        }
+        if ('serviceWorker' in window.parent.navigator) {
+            window.parent.navigator.serviceWorker.register('app/static/sw.js')
+            .then(function(reg) { console.log('PWA Lista'); })
+            .catch(function(err) { console.log('Error PWA', err); });
+        }
+    </script>
+    """
+    components.html(pwa_code, height=0, width=0)
+    # ---------------------
+
     zona_stgo = ZoneInfo("America/Santiago")
     hoy = datetime.now(zona_stgo)
     es_aniversario = hoy.day == 12
@@ -148,7 +175,6 @@ def render_dashboard():
 
     with st.expander("🔎 Cambiar de ciudad", expanded=False):
         if loc.get("source") == "manual":
-            # Conectamos el botón al callback
             st.button("🛰️ Volver a mi ubicación automática", on_click=reset_to_auto_location)
                 
         search_query = st.text_input("Escribe una ciudad:", key="city_search")
@@ -158,7 +184,6 @@ def render_dashboard():
                 if results:
                     for r in results:
                         city_text = f"{r['name']}, {r.get('admin1', '')}, {r.get('country', '')}".strip(", ")
-                        # Conectamos el botón de la ciudad elegida al callback, pasándole los datos de la ciudad (r)
                         st.button(f"📍 {city_text}", key=r['id'], on_click=set_manual_location, args=(r,))
                 else:
                     st.warning("No encontramos esa ciudad.")
@@ -226,5 +251,6 @@ def render_dashboard():
         
     st.markdown(html_cards, unsafe_allow_html=True)
 
+    # Nota: Eliminamos el st.divider() que generaba la línea doble
     yesterday_row = weather_df.iloc[0]
     render_feedback_section(yesterday_row)
