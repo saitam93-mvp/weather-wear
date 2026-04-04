@@ -58,7 +58,6 @@ def render_wear_card(rec, target_row, ref_row):
     t_precip_text, _ = format_precipitation(target_row)
     r_precip_text, _ = format_precipitation(ref_row)
 
-    # CERO espacios a la izquierda en el HTML para evitar que Streamlit lo procese como código
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
@@ -126,11 +125,11 @@ def render_dashboard():
         if (!parent.querySelector('link[rel="manifest"]')) {
             const manifest = parent.createElement('link');
             manifest.rel = 'manifest';
-            manifest.href = 'app/static/manifest.json';
+            manifest.href = '/static/manifest.json';
             parent.head.appendChild(manifest);
         }
         if ('serviceWorker' in window.parent.navigator) {
-            window.parent.navigator.serviceWorker.register('app/static/sw.js')
+            window.parent.navigator.serviceWorker.register('/static/sw.js')
             .then(function(reg) { console.log('PWA Lista'); })
             .catch(function(err) { console.log('Error PWA', err); });
         }
@@ -251,6 +250,5 @@ def render_dashboard():
         
     st.markdown(html_cards, unsafe_allow_html=True)
 
-    # Nota: Eliminamos el st.divider() que generaba la línea doble
     yesterday_row = weather_df.iloc[0]
     render_feedback_section(yesterday_row)
