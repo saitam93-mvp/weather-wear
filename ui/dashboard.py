@@ -60,16 +60,16 @@ def render_wear_card(rec, target_row, ref_row):
 
     html = f"""
 <style>
-.wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; }}
+.wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; color: #ffffff; }}
 .wear-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }}
 .wear-mode {{ color: #888; font-size: 14px; text-transform: uppercase; font-weight: bold; }}
-.wear-title {{ font-size: 32px; font-weight: 800; margin: 0; }}
+.wear-title {{ font-size: 32px; font-weight: 800; margin: 0; color: #ffffff; }}
 .wear-delta {{ font-size: 14px; color: #aaa; margin-top: -5px; }}
-.wear-desc {{ font-size: 18px; color: white; font-weight: bold; margin-bottom: 15px; }}
+.wear-desc {{ font-size: 18px; color: #ffffff; font-weight: bold; margin-bottom: 15px; }}
 .wear-metrics {{ display: flex; justify-content: space-between; background-color: #1a1b21; padding: 15px; border-radius: 10px; }}
 .metric-block {{ flex: 1; text-align: center; }}
 .metric-title {{ color: #ccc; font-size: 12px; margin-bottom: 5px; }}
-.metric-value {{ font-size: 20px; font-weight: bold; margin-bottom: 5px; }}
+.metric-value {{ font-size: 20px; font-weight: bold; margin-bottom: 5px; color: #ffffff; }}
 .metric-rain {{ font-size: 14px; color: #b3e5fc; margin: 0; }}
 </style>
 <div class="wear-card">
@@ -232,16 +232,16 @@ def render_dashboard():
         html_cards += f"""
         <div style="display: flex; justify-content: space-between; align-items: center; 
                     background-color: #262730; padding: 15px; border-radius: 10px; margin-bottom: 10px;
-                    border-left: 3px solid rgba(255, 75, 75, 0.5);">
+                    border-left: 3px solid rgba(255, 75, 75, 0.5); color: #ffffff;">
             <div style="flex: 1.2;">
-                <strong style="font-size: 16px;">{day['dia']}</strong><br>
+                <strong style="font-size: 16px; color: #ffffff;">{day['dia']}</strong><br>
                 <span style="font-size: 12px; color: #aaa;">{day['fecha']}</span>
             </div>
-            <div style="flex: 1.8; text-align: center;">
+            <div style="flex: 1.8; text-align: center; color: #ffffff;">
                 🌡️ {day['temp_max']}° / {day['temp_min']}°<br>
                 <span style="font-size: 12px; color: #b3e5fc;">{precip_text}</span>
             </div>
-            <div style="flex: 2; text-align: right; line-height: 1.4;">
+            <div style="flex: 2; text-align: right; line-height: 1.4; color: #ffffff;">
                 🧣 <strong>Nivel {day['level']}</strong><br>
                 <span style="font-size: 11px; color: #ccc;">{level_desc}</span>{precip_alert}
             </div>
