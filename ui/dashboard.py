@@ -58,6 +58,7 @@ def render_wear_card(rec, target_row, ref_row):
     t_precip_text, _ = format_precipitation(target_row)
     r_precip_text, _ = format_precipitation(ref_row)
 
+    # Inyección de color blanco puro para combatir el CSS de iOS Safari
     html = f"""
 <style>
 .wear-card {{ background-color: #262730; border-radius: 15px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-left: 5px solid {color_acc}; margin-bottom: 20px; color: #ffffff; }}
@@ -101,7 +102,6 @@ def render_wear_card(rec, target_row, ref_row):
 # --- CALLBACKS PARA EL MANEJO DE ESTADO DEL BUSCADOR ---
 
 def set_manual_location(r):
-    """Callback: Guarda la nueva ubicación y limpia la caja de texto antes de recargar."""
     st.session_state["manual_loc"] = {
         "lat": r["latitude"], "lon": r["longitude"],
         "source": "manual", "name": r["name"]
@@ -109,7 +109,6 @@ def set_manual_location(r):
     st.session_state["city_search"] = ""
 
 def reset_to_auto_location():
-    """Callback: Borra la ubicación manual y limpia la caja de texto antes de recargar."""
     if "manual_loc" in st.session_state:
         del st.session_state["manual_loc"]
     st.session_state["city_search"] = ""
@@ -229,6 +228,7 @@ def render_dashboard():
         else:
             level_desc = day['level_text']
 
+        # Tarjetas de 7 días también con textos blancos forzados
         html_cards += f"""
         <div style="display: flex; justify-content: space-between; align-items: center; 
                     background-color: #262730; padding: 15px; border-radius: 10px; margin-bottom: 10px;
